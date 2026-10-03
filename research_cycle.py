@@ -99,6 +99,16 @@ def main() -> int:
         item = claimed.get("item")
         if not item:
             replanned = post_json(token, QUEUE_URL, {"action": "replan_blocked"})
+            if replanned.get("created", 0) == 0:
+                processed.append(
+                    {
+                        "processed": False,
+                        "claim": claimed,
+                        "replan": replanned,
+                    }
+                )
+                stop_reason = "research_exhausted"
+                break
             claimed = post_json(token, QUEUE_URL, {"action": "claim_next"})
             item = claimed.get("item")
             if not item:
