@@ -58,9 +58,15 @@ def run_demo_comparison() -> dict:
             }
         )
 
+    best = max(results, key=lambda item: item["metrics"]["final_capital"])
     return {
         "mode": "demo_backtest",
         "data_source": "deterministic_sample",
         "starting_capital": STARTING_CAPITAL,
+        "summary": {
+            "best_strategy": best["strategy"],
+            "best_final_capital": best["metrics"]["final_capital"],
+            "strategy_count": len(results),
+        },
         "strategies": results,
     }
