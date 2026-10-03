@@ -15,7 +15,8 @@ QUEUE_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashi
 CONTROLLER_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-controller"
 OIDC_AUDIENCE = "stock-warashibe-supabase"
 MAX_QUEUE_ITEMS_PER_CYCLE = 3
-MAX_GENERATION = 5
+MAX_GENERATION = 6
+MAX_CONSECUTIVE_VALIDATED = 2
 
 
 def get_oidc_token() -> str:
@@ -76,6 +77,7 @@ def main() -> int:
             "cycle_key": cycle_key,
             "max_items": MAX_QUEUE_ITEMS_PER_CYCLE,
             "max_generation": MAX_GENERATION,
+            "max_consecutive_validated": MAX_CONSECUTIVE_VALIDATED,
         },
     )
     seeded = post_json(token, QUEUE_URL, {"action": "seed"})
@@ -139,6 +141,7 @@ def main() -> int:
             REGISTRY_URL,
             {"action": "sync_validated"},
         )
+        quality_guard = evaluation.get("quality_guard") or {}
         controller_record = post_json(
             token,
             CONTROLLER_URL,
@@ -147,6 +150,11 @@ def main() -> int:
                 "cycle_key": cycle_key,
                 "queue_key": item["queue_key"],
                 "outcome": evaluation["verdict"],
+                "quality_rejected": (
+                    evaluation["verdict"] == "rejected"
+                    and quality_guard.get("criteria_passed") is True
+                    and quality_guard.get("accepted") is False
+                ),
             },
         )
 

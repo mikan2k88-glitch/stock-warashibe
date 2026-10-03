@@ -3,6 +3,7 @@ from __future__ import annotations
 from config import STARTING_CAPITAL
 from backtest.scenario_runner import scenario_bars
 from metrics.evaluator import evaluate_capital_path
+from metrics.quality_guard import evaluate_quality
 from simulation.trading_simulator import simulate_one_trade
 from strategies.mean_reversion_adaptive_confirmation import (
     MeanReversionAdaptiveConfirmationStrategy,
@@ -136,57 +137,65 @@ def run_hypothesis_ab_test(
             >= by_scenario[name]["baseline"]["final_capital"]
         )
 
-    preserved_scenarios = [
+    core_preserved = [
         "downtrend",
         "reversal",
         "weak_reversal",
         "moderate_reversal",
+        "shallow_reversal",
         "sideways",
     ]
-    preservation = {name: preserved(name) for name in preserved_scenarios}
+    preservation = {name: preserved(name) for name in core_preserved}
+
+    if rule == "allow_shallow_discount_band_with_tertiary_volume":
+        target = "shallow_reversal"
+    elif rule == "lower_shallow_discount_floor":
+        target = "micro_reversal"
+    elif rule == "lower_tertiary_volume_ratio":
+        target = "thin_volume_reversal"
+    elif rule == "allow_moderate_discount_with_secondary_volume_confirmation":
+        target = "moderate_reversal"
+    elif rule == "allow_deep_discount_without_volume_confirmation":
+        target = "weak_reversal"
+    else:
+        target = "downtrend"
+
+    target_improved = (
+        by_scenario[target]["candidate"]["final_capital"]
+        > by_scenario[target]["baseline"]["final_capital"]
+    )
 
     if rule in {
         "allow_shallow_discount_band_with_tertiary_volume",
         "lower_shallow_discount_floor",
         "lower_tertiary_volume_ratio",
     }:
-        shallow_improved = (
-            by_scenario["shallow_reversal"]["candidate"]["final_capital"]
-            > by_scenario["shallow_reversal"]["baseline"]["final_capital"]
-        )
-        verdict = (
-            "validated"
-            if shallow_improved and all(preservation.values())
-            else "rejected"
-        )
+        criteria_passed = target_improved and all(preservation.values())
         acceptance_criteria = {
-            "shallow_reversal_improved": True,
-            **{f"{name}_preserved": True for name in preserved_scenarios},
+            f"{target}_improved": True,
+            **{f"{name}_preserved": True for name in core_preserved},
         }
         observed = {
-            "shallow_reversal_improved": shallow_improved,
+            f"{target}_improved": target_improved,
             **{f"{name}_preserved": value for name, value in preservation.items()},
         }
     elif rule == "allow_moderate_discount_with_secondary_volume_confirmation":
-        improved = (
-            by_scenario["moderate_reversal"]["candidate"]["final_capital"]
-            > by_scenario["moderate_reversal"]["baseline"]["final_capital"]
-        )
-        verdict = "validated" if improved and all(preservation.values()) else "rejected"
+        criteria_passed = target_improved and all(preservation.values())
         acceptance_criteria = {
             "moderate_reversal_improved": True,
-            **{f"{name}_preserved": True for name in preserved_scenarios},
+            **{f"{name}_preserved": True for name in core_preserved},
         }
         observed = {
-            "moderate_reversal_improved": improved,
+            "moderate_reversal_improved": target_improved,
             **{f"{name}_preserved": value for name, value in preservation.items()},
         }
     elif rule == "allow_deep_discount_without_volume_confirmation":
-        improved = (
-            by_scenario["weak_reversal"]["candidate"]["final_capital"]
-            > by_scenario["weak_reversal"]["baseline"]["final_capital"]
+        criteria_passed = (
+            target_improved
+            and preservation["downtrend"]
+            and preservation["reversal"]
+            and preservation["sideways"]
         )
-        verdict = "validated" if improved and preservation["downtrend"] and preservation["reversal"] and preservation["sideways"] else "rejected"
         acceptance_criteria = {
             "weak_reversal_improved": True,
             "downtrend_preserved": True,
@@ -194,20 +203,16 @@ def run_hypothesis_ab_test(
             "sideways_preserved": True,
         }
         observed = {
-            "weak_reversal_improved": improved,
+            "weak_reversal_improved": target_improved,
             "downtrend_preserved": preservation["downtrend"],
             "reversal_preserved": preservation["reversal"],
             "sideways_preserved": preservation["sideways"],
         }
     else:
-        downtrend_improved = (
-            by_scenario["downtrend"]["candidate"]["final_capital"]
-            > by_scenario["downtrend"]["baseline"]["final_capital"]
-        )
-        verdict = (
-            "validated"
-            if downtrend_improved and preservation["reversal"] and preservation["sideways"]
-            else "rejected"
+        criteria_passed = (
+            target_improved
+            and preservation["reversal"]
+            and preservation["sideways"]
         )
         acceptance_criteria = {
             "downtrend_loss_reduced": True,
@@ -215,10 +220,18 @@ def run_hypothesis_ab_test(
             "sideways_preserved": True,
         }
         observed = {
-            "downtrend_improved": downtrend_improved,
+            "downtrend_improved": target_improved,
             "reversal_preserved": preservation["reversal"],
             "sideways_preserved": preservation["sideways"],
         }
+
+    quality_guard = evaluate_quality(
+        comparisons=rows,
+        baseline_spec=baseline_spec,
+        proposed_change=proposed_change,
+        criteria_passed=criteria_passed,
+    )
+    verdict = "validated" if quality_guard["accepted"] else "rejected"
 
     return {
         "hypothesis_type": rule,
@@ -230,6 +243,7 @@ def run_hypothesis_ab_test(
         },
         "acceptance_criteria": acceptance_criteria,
         "observed": observed,
+        "quality_guard": quality_guard,
         "verdict": verdict,
         "comparisons": rows,
     }
