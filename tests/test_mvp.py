@@ -225,3 +225,81 @@ def test_real_data_readiness_gate_is_ready_without_live_data():
     assert result["live_trading"] is False
     assert result["real_market_data_connected"] is False
     assert all(result["checks"].values())
+
+
+def test_remote_market_parser_uses_unadjusted_ohlc_and_hash():
+    from datetime import date
+
+    from data.remote_market_data import parse_market_csv
+
+    text = (
+        "Date,Open,High,Low,Close,Adj Close,Volume\n"
+        "2026-01-01,100,102,99,101,100,10000\n"
+        "2026-01-02,99,100,97,98,97,12000\n"
+        "2026-01-03,97,99,95,96,95,13000\n"
+        "2026-01-04,98,101,97,100,99,14000\n"
+        "2026-01-05,101,103,100,102,101,15000\n"
+    )
+    batch = parse_market_csv(
+        text,
+        symbol="9432.T",
+        source_url="https://example.test/9432.csv",
+        as_of=date(2026, 1, 5),
+    )
+    assert batch.bars[0].close == 101
+    assert batch.adjusted_close[0] == 100
+    assert batch.price_mode == "unadjusted_ohlc"
+    assert len(batch.source_sha256) == 64
+
+
+def test_corporate_action_guard_fails_closed():
+    from datetime import date
+
+    from data.remote_market_data import CorporateActionDetected, parse_market_csv
+
+    text = (
+        "Date,Open,High,Low,Close,Adj Close,Volume\n"
+        "2026-01-01,100,102,99,100,100,10000\n"
+        "2026-01-02,100,102,99,100,100,10000\n"
+        "2026-01-03,50,51,49,50,100,10000\n"
+        "2026-01-04,51,52,50,51,102,10000\n"
+        "2026-01-05,52,53,51,52,104,10000\n"
+    )
+    try:
+        parse_market_csv(
+            text,
+            symbol="TEST",
+            source_url="https://example.test/split.csv",
+            as_of=date(2026, 1, 5),
+        )
+    except CorporateActionDetected:
+        pass
+    else:
+        raise AssertionError("corporate action must fail closed")
+
+
+def test_historical_runner_keeps_champion_frozen_and_oos_only():
+    from data.remote_market_data import parse_market_csv
+    from backtest.historical_runner import run_historical_market_backtest
+
+    rows = ["Date,Open,High,Low,Close,Adj Close,Volume"]
+    closes = [155, 153, 150, 151, 154, 152, 149, 151, 153, 150, 148, 151, 154, 152, 149, 152, 155, 153, 150, 154]
+    for index, close in enumerate(closes, start=1):
+        day = f"2026-01-{index:02d}"
+        open_price = close + 1
+        rows.append(
+            f"{day},{open_price},{open_price + 2},{close - 2},{close},{close},{1000000 + index}"
+        )
+    batch = parse_market_csv(
+        "\n".join(rows) + "\n",
+        symbol="9432.T",
+        source_url="https://example.test/9432.csv",
+    )
+
+    result = run_historical_market_backtest(batch=batch)
+    assert result["live_trading"] is False
+    assert result["summary"]["champion_strategy"] == "mean_reversion_band_volume:g5"
+    assert result["split"]["in_sample_used_for_tuning"] is False
+    assert result["split"]["out_of_sample_start"] > result["split"]["in_sample_end"]
+    assert result["price_policy"]["lot_size"] == 100
+    assert len(result["strategies"]) == 2
