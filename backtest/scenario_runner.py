@@ -41,6 +41,12 @@ def scenario_bars() -> dict[str, list[Bar]]:
             Bar("2026-01-03", 98, 99, 95, 97, 66_000),
             Bar("2026-01-04", 98, 104, 97, 103, 74_000),
         ],
+        "shallow_reversal": [
+            Bar("2026-01-01", 105, 106, 102, 104, 60_000),
+            Bar("2026-01-02", 102, 103, 99, 101, 62_000),
+            Bar("2026-01-03", 99, 100, 96, 98, 65_000),
+            Bar("2026-01-04", 99, 104, 98, 103, 74_000),
+        ],
         "sideways": [
             Bar("2026-01-01", 100, 102, 99, 100, 50_000),
             Bar("2026-01-02", 101, 102, 99, 101, 51_000),
@@ -95,7 +101,4 @@ def run_scenario(name: str, bars: list[Bar]) -> dict:
 
 
 def run_all_scenarios() -> list[dict]:
-    return [
-        run_scenario(name, bars)
-        for name, bars in scenario_bars().items()
-    ]
+    return [run_scenario(name, bars) for name, bars in scenario_bars().items()]

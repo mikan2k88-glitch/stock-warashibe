@@ -12,8 +12,10 @@ STORE_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashi
 EVALUATOR_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-hypothesis-evaluator"
 REGISTRY_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-strategy-registry"
 QUEUE_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-queue"
+CONTROLLER_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-controller"
 OIDC_AUDIENCE = "stock-warashibe-supabase"
-MAX_QUEUE_ITEMS_PER_CYCLE = 2
+MAX_QUEUE_ITEMS_PER_CYCLE = 3
+MAX_GENERATION = 5
 
 
 def get_oidc_token() -> str:
@@ -47,6 +49,7 @@ def main() -> int:
     token = get_oidc_token()
     run_id = os.environ.get("GITHUB_RUN_ID", "local")
     attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
+    cycle_key = f"controller-{run_id}-{attempt}"
 
     stored = []
     for result in run_all_scenarios():
@@ -65,15 +68,47 @@ def main() -> int:
         )
 
     registry_before = post_json(token, REGISTRY_URL, {"action": "sync_validated"})
+    controller_begin = post_json(
+        token,
+        CONTROLLER_URL,
+        {
+            "action": "begin",
+            "cycle_key": cycle_key,
+            "max_items": MAX_QUEUE_ITEMS_PER_CYCLE,
+            "max_generation": MAX_GENERATION,
+        },
+    )
     seeded = post_json(token, QUEUE_URL, {"action": "seed"})
 
     processed = []
+    stop_reason = None
+
     for _ in range(MAX_QUEUE_ITEMS_PER_CYCLE):
+        decision = post_json(
+            token,
+            CONTROLLER_URL,
+            {"action": "decision", "cycle_key": cycle_key},
+        )
+        if decision.get("stop"):
+            stop_reason = decision.get("reason")
+            break
+
         claimed = post_json(token, QUEUE_URL, {"action": "claim_next"})
         item = claimed.get("item")
         if not item:
-            processed.append({"claim": claimed, "processed": False})
-            break
+            replanned = post_json(token, QUEUE_URL, {"action": "replan_blocked"})
+            claimed = post_json(token, QUEUE_URL, {"action": "claim_next"})
+            item = claimed.get("item")
+            if not item:
+                processed.append(
+                    {
+                        "processed": False,
+                        "claim": claimed,
+                        "replan": replanned,
+                    }
+                )
+                stop_reason = "research_exhausted"
+                break
 
         active = claimed.get("active_strategy")
         evaluation = run_hypothesis_ab_test(
@@ -104,16 +139,45 @@ def main() -> int:
             REGISTRY_URL,
             {"action": "sync_validated"},
         )
+        controller_record = post_json(
+            token,
+            CONTROLLER_URL,
+            {
+                "action": "record",
+                "cycle_key": cycle_key,
+                "queue_key": item["queue_key"],
+                "outcome": evaluation["verdict"],
+            },
+        )
+
+        sweep = None
+        replanned = None
+        if evaluation["verdict"] == "validated":
+            sweep = post_json(token, QUEUE_URL, {"action": "claim_next"})
+            replanned = post_json(token, QUEUE_URL, {"action": "replan_blocked"})
+
         processed.append(
             {
+                "processed": True,
                 "claim": claimed,
                 "evaluation": evaluated,
                 "queue_finalized": finalized,
                 "registry_sync": registry_after_item,
-                "processed": True,
+                "controller_record": controller_record,
+                "stale_sweep": sweep,
+                "replan": replanned,
             }
         )
 
+    controller_final = post_json(
+        token,
+        CONTROLLER_URL,
+        {
+            "action": "finalize",
+            "cycle_key": cycle_key,
+            "stop_reason": stop_reason,
+        },
+    )
     queue_after = post_json(token, QUEUE_URL, {"action": "list"})
     active_after = post_json(token, REGISTRY_URL, {"action": "get_active"})
 
@@ -122,8 +186,10 @@ def main() -> int:
             {
                 "stored": stored,
                 "strategy_registry_before": registry_before,
+                "controller_begin": controller_begin,
                 "queue_seed": seeded,
                 "processed_queue_items": processed,
+                "controller_final": controller_final,
                 "queue_after": queue_after,
                 "active_strategy_after": active_after,
             },

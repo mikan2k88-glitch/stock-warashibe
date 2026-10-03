@@ -7,6 +7,7 @@ from simulation.trading_simulator import simulate_one_trade
 from strategies.mean_reversion_adaptive_confirmation import (
     MeanReversionAdaptiveConfirmationStrategy,
 )
+from strategies.mean_reversion_band_volume import MeanReversionBandVolumeStrategy
 from strategies.mean_reversion_secondary_volume import (
     MeanReversionSecondaryVolumeStrategy,
 )
@@ -75,6 +76,32 @@ def _candidate_for_rule(rule: str, proposed_change: dict):
                 proposed_change.get("deep_discount_threshold", 0.035)
             ),
         )
+    if rule in {
+        "allow_shallow_discount_band_with_tertiary_volume",
+        "lower_shallow_discount_floor",
+        "lower_tertiary_volume_ratio",
+    }:
+        return MeanReversionBandVolumeStrategy(
+            minimum_volume_ratio=float(proposed_change.get("minimum_volume_ratio", 1.20)),
+            deep_discount_threshold=float(
+                proposed_change.get("deep_discount_threshold", 0.04)
+            ),
+            moderate_discount_threshold=float(
+                proposed_change.get("moderate_discount_threshold", 0.03)
+            ),
+            secondary_volume_ratio=float(
+                proposed_change.get("secondary_volume_ratio", 1.09)
+            ),
+            shallow_discount_threshold=float(
+                proposed_change.get("shallow_discount_threshold", 0.025)
+            ),
+            shallow_discount_ceiling=float(
+                proposed_change.get("shallow_discount_ceiling", 0.035)
+            ),
+            tertiary_volume_ratio=float(
+                proposed_change.get("tertiary_volume_ratio", 1.08)
+            ),
+        )
     raise ValueError(f"unsupported hypothesis rule: {rule}")
 
 
@@ -109,54 +136,68 @@ def run_hypothesis_ab_test(
             >= by_scenario[name]["baseline"]["final_capital"]
         )
 
-    downtrend_preserved = preserved("downtrend")
-    reversal_preserved = preserved("reversal")
-    weak_reversal_preserved = preserved("weak_reversal")
-    sideways_preserved = preserved("sideways")
-    moderate_reversal_improved = (
-        by_scenario["moderate_reversal"]["candidate"]["final_capital"]
-        > by_scenario["moderate_reversal"]["baseline"]["final_capital"]
-    )
+    preserved_scenarios = [
+        "downtrend",
+        "reversal",
+        "weak_reversal",
+        "moderate_reversal",
+        "sideways",
+    ]
+    preservation = {name: preserved(name) for name in preserved_scenarios}
 
-    if rule == "allow_moderate_discount_with_secondary_volume_confirmation":
+    if rule in {
+        "allow_shallow_discount_band_with_tertiary_volume",
+        "lower_shallow_discount_floor",
+        "lower_tertiary_volume_ratio",
+    }:
+        shallow_improved = (
+            by_scenario["shallow_reversal"]["candidate"]["final_capital"]
+            > by_scenario["shallow_reversal"]["baseline"]["final_capital"]
+        )
         verdict = (
             "validated"
-            if (
-                moderate_reversal_improved
-                and downtrend_preserved
-                and reversal_preserved
-                and weak_reversal_preserved
-                and sideways_preserved
-            )
+            if shallow_improved and all(preservation.values())
             else "rejected"
         )
         acceptance_criteria = {
+            "shallow_reversal_improved": True,
+            **{f"{name}_preserved": True for name in preserved_scenarios},
+        }
+        observed = {
+            "shallow_reversal_improved": shallow_improved,
+            **{f"{name}_preserved": value for name, value in preservation.items()},
+        }
+    elif rule == "allow_moderate_discount_with_secondary_volume_confirmation":
+        improved = (
+            by_scenario["moderate_reversal"]["candidate"]["final_capital"]
+            > by_scenario["moderate_reversal"]["baseline"]["final_capital"]
+        )
+        verdict = "validated" if improved and all(preservation.values()) else "rejected"
+        acceptance_criteria = {
             "moderate_reversal_improved": True,
-            "downtrend_result_preserved": True,
-            "reversal_gain_preserved": True,
-            "weak_reversal_gain_preserved": True,
-            "sideways_result_preserved": True,
+            **{f"{name}_preserved": True for name in preserved_scenarios},
+        }
+        observed = {
+            "moderate_reversal_improved": improved,
+            **{f"{name}_preserved": value for name, value in preservation.items()},
         }
     elif rule == "allow_deep_discount_without_volume_confirmation":
-        weak_reversal_improved = (
+        improved = (
             by_scenario["weak_reversal"]["candidate"]["final_capital"]
             > by_scenario["weak_reversal"]["baseline"]["final_capital"]
         )
-        verdict = (
-            "validated"
-            if (
-                weak_reversal_improved
-                and downtrend_preserved
-                and reversal_preserved
-                and sideways_preserved
-            )
-            else "rejected"
-        )
+        verdict = "validated" if improved and preservation["downtrend"] and preservation["reversal"] and preservation["sideways"] else "rejected"
         acceptance_criteria = {
             "weak_reversal_improved": True,
-            "downtrend_result_preserved": True,
-            "reversal_gain_preserved": True,
-            "sideways_result_preserved": True,
+            "downtrend_preserved": True,
+            "reversal_preserved": True,
+            "sideways_preserved": True,
+        }
+        observed = {
+            "weak_reversal_improved": improved,
+            "downtrend_preserved": preservation["downtrend"],
+            "reversal_preserved": preservation["reversal"],
+            "sideways_preserved": preservation["sideways"],
         }
     else:
         downtrend_improved = (
@@ -165,13 +206,18 @@ def run_hypothesis_ab_test(
         )
         verdict = (
             "validated"
-            if downtrend_improved and reversal_preserved and sideways_preserved
+            if downtrend_improved and preservation["reversal"] and preservation["sideways"]
             else "rejected"
         )
         acceptance_criteria = {
             "downtrend_loss_reduced": True,
-            "reversal_gain_preserved": True,
-            "sideways_result_preserved": True,
+            "reversal_preserved": True,
+            "sideways_preserved": True,
+        }
+        observed = {
+            "downtrend_improved": downtrend_improved,
+            "reversal_preserved": preservation["reversal"],
+            "sideways_preserved": preservation["sideways"],
         }
 
     return {
@@ -183,13 +229,7 @@ def run_hypothesis_ab_test(
             "config": {},
         },
         "acceptance_criteria": acceptance_criteria,
-        "observed": {
-            "downtrend_preserved": downtrend_preserved,
-            "reversal_preserved": reversal_preserved,
-            "weak_reversal_preserved": weak_reversal_preserved,
-            "sideways_preserved": sideways_preserved,
-            "moderate_reversal_improved": moderate_reversal_improved,
-        },
+        "observed": observed,
         "verdict": verdict,
         "comparisons": rows,
     }

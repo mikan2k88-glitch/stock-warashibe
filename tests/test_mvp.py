@@ -55,56 +55,66 @@ def test_synthetic_scenario_suite():
         "reversal",
         "weak_reversal",
         "moderate_reversal",
+        "shallow_reversal",
         "sideways",
     ]
 
 
-def test_generation_four_hypothesis_uses_generation_three_baseline():
+def test_generation_five_band_volume_candidate():
     from backtest.hypothesis_runner import run_hypothesis_ab_test
 
     baseline = {
-        "strategy_key": "mean_reversion_adaptive_confirmation:g3",
-        "strategy_name": "mean_reversion_adaptive_confirmation",
-        "generation": 3,
+        "strategy_key": "mean_reversion_secondary_volume:g4",
+        "strategy_name": "mean_reversion_secondary_volume",
+        "generation": 4,
         "config": {
-            "minimum_volume_ratio": 1.20,
-            "deep_discount_threshold": 0.04,
-        },
-    }
-    result = run_hypothesis_ab_test(
-        {
-            "rule": "allow_moderate_discount_with_secondary_volume_confirmation",
             "minimum_volume_ratio": 1.20,
             "deep_discount_threshold": 0.04,
             "moderate_discount_threshold": 0.03,
             "secondary_volume_ratio": 1.09,
         },
+    }
+    result = run_hypothesis_ab_test(
+        {
+            "rule": "allow_shallow_discount_band_with_tertiary_volume",
+            "minimum_volume_ratio": 1.20,
+            "deep_discount_threshold": 0.04,
+            "moderate_discount_threshold": 0.03,
+            "secondary_volume_ratio": 1.09,
+            "shallow_discount_threshold": 0.025,
+            "shallow_discount_ceiling": 0.035,
+            "tertiary_volume_ratio": 1.08,
+        },
         baseline_spec=baseline,
     )
 
-    assert result["baseline_strategy"]["generation"] == 3
-    assert result["observed"]["moderate_reversal_improved"] is True
+    assert result["baseline_strategy"]["generation"] == 4
+    assert result["observed"]["shallow_reversal_improved"] is True
     assert result["observed"]["downtrend_preserved"] is True
     assert result["observed"]["reversal_preserved"] is True
     assert result["observed"]["weak_reversal_preserved"] is True
+    assert result["observed"]["moderate_reversal_preserved"] is True
     assert result["observed"]["sideways_preserved"] is True
     assert result["verdict"] == "validated"
 
 
-def test_strategy_registry_builds_generation_four():
+def test_strategy_registry_builds_generation_five():
     from strategies.registry import build_strategy
 
     strategy = build_strategy(
         {
-            "strategy_name": "mean_reversion_secondary_volume",
-            "generation": 4,
+            "strategy_name": "mean_reversion_band_volume",
+            "generation": 5,
             "config": {
                 "minimum_volume_ratio": 1.20,
                 "deep_discount_threshold": 0.04,
                 "moderate_discount_threshold": 0.03,
                 "secondary_volume_ratio": 1.09,
+                "shallow_discount_threshold": 0.025,
+                "shallow_discount_ceiling": 0.035,
+                "tertiary_volume_ratio": 1.08,
             },
         }
     )
-    assert strategy.name == "mean_reversion_secondary_volume"
-    assert strategy.secondary_volume_ratio == 1.09
+    assert strategy.name == "mean_reversion_band_volume"
+    assert strategy.tertiary_volume_ratio == 1.08
