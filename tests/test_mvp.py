@@ -35,3 +35,16 @@ def test_metrics_drawdown():
     result = evaluate_capital_path([30_000, 33_000, 31_000, 35_000])
     assert result["final_capital"] == 35_000
     assert result["max_drawdown"] > 0
+
+
+def test_demo_comparison_has_three_strategies():
+    from backtest.demo_runner import run_demo_comparison
+
+    result = run_demo_comparison()
+    assert result["starting_capital"] == 30_000
+    assert [item["strategy"] for item in result["strategies"]] == [
+        "momentum",
+        "mean_reversion",
+        "random",
+    ]
+    assert len(result["strategies"]) == 3
