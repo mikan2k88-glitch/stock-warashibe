@@ -302,6 +302,7 @@ def test_historical_runner_keeps_champion_frozen_and_oos_only():
     assert result["split"]["in_sample_used_for_tuning"] is False
     assert result["split"]["out_of_sample_start"] > result["split"]["in_sample_end"]
     assert result["price_policy"]["lot_size"] == 100
+    assert len(result["source"]["sha256"]) == 64
     assert len(result["strategies"]) == 2
 
 
