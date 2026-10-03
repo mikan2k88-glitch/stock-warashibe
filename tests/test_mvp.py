@@ -480,7 +480,7 @@ def test_multistock_validation_filters_unaffordable_without_performance_selectio
     result = run_multi_stock_validation(
         provider=Provider(),
         symbols=("A.T", "B.T", "C.T", "EXP.T"),
-        as_of=date(2026, 2, 20),
+        as_of=date(2026, 2, 9),
     )
     assert result["summary"]["eligible_stock_count"] == 3
     assert result["universe"]["performance_used_for_selection"] is False
