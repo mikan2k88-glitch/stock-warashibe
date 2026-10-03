@@ -6,6 +6,9 @@ from metrics.evaluator import evaluate_capital_path
 from simulation.trading_simulator import simulate_one_trade
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.mean_reversion_trend_guard import MeanReversionTrendGuardStrategy
+from strategies.mean_reversion_volume_confirmation import (
+    MeanReversionVolumeConfirmationStrategy,
+)
 
 
 def _run(strategy, bars):
@@ -32,11 +35,24 @@ def _run(strategy, bars):
     }
 
 
-def run_hypothesis_ab_test() -> dict:
+def _candidate_for_rule(rule: str, proposed_change: dict):
+    if rule == "require_non_negative_short_slope_before_mean_reversion_entry":
+        return MeanReversionTrendGuardStrategy()
+    if rule == "require_volume_acceleration_on_negative_slope":
+        return MeanReversionVolumeConfirmationStrategy(
+            minimum_volume_ratio=float(proposed_change.get("minimum_volume_ratio", 1.20))
+        )
+    raise ValueError(f"unsupported hypothesis rule: {rule}")
+
+
+def run_hypothesis_ab_test(proposed_change: dict) -> dict:
+    rule = str(proposed_change["rule"])
+    candidate_strategy = _candidate_for_rule(rule, proposed_change)
+
     rows = []
     for scenario, bars in scenario_bars().items():
         baseline = _run(MeanReversionStrategy(), bars)
-        candidate = _run(MeanReversionTrendGuardStrategy(), bars)
+        candidate = _run(candidate_strategy, bars)
         rows.append(
             {
                 "scenario": scenario,
@@ -57,17 +73,27 @@ def run_hypothesis_ab_test() -> dict:
         by_scenario["reversal"]["candidate"]["final_capital"]
         >= by_scenario["reversal"]["baseline"]["final_capital"]
     )
+    sideways_preserved = (
+        by_scenario["sideways"]["candidate"]["final_capital"]
+        >= by_scenario["sideways"]["baseline"]["final_capital"]
+    )
 
-    verdict = "validated" if downtrend_improved and reversal_preserved else "rejected"
+    verdict = (
+        "validated"
+        if downtrend_improved and reversal_preserved and sideways_preserved
+        else "rejected"
+    )
     return {
-        "hypothesis_type": "mean_reversion_trend_guard",
+        "hypothesis_type": rule,
         "acceptance_criteria": {
             "downtrend_loss_reduced": True,
             "reversal_gain_preserved": True,
+            "sideways_result_preserved": True,
         },
         "observed": {
             "downtrend_improved": downtrend_improved,
             "reversal_preserved": reversal_preserved,
+            "sideways_preserved": sideways_preserved,
         },
         "verdict": verdict,
         "comparisons": rows,
