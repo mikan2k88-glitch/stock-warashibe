@@ -374,3 +374,113 @@ def test_remote_market_parser_drops_small_number_of_incomplete_rows():
     )
     assert batch.dropped_incomplete_rows == 1
     assert len(batch.bars) == 51
+
+
+def _fake_market_batch(symbol, closes, start_day=1):
+    import hashlib
+
+    from data.remote_market_data import MarketDataBatch
+    from data.stock_data_adapter import Bar
+
+    bars = []
+    for index, close in enumerate(closes, start=start_day):
+        month = 1 + (index - 1) // 28
+        day = 1 + (index - 1) % 28
+        date_value = f"2026-{month:02d}-{day:02d}"
+        bars.append(
+            Bar(
+                date_value,
+                close + 0.5,
+                close + 1.0,
+                close - 1.0,
+                close,
+                1_000_000 + index,
+            )
+        )
+    digest = hashlib.sha256(symbol.encode()).hexdigest()
+    return MarketDataBatch(
+        symbol=symbol,
+        bars=tuple(bars),
+        adjusted_close=tuple(float(x) for x in closes),
+        source_url=f"https://example.test/{symbol}",
+        source_sha256=digest,
+    )
+
+
+def test_yahoo_chart_parser_handles_null_row():
+    import json
+    from datetime import date, datetime, UTC
+
+    from data.yahoo_chart_provider import parse_yahoo_chart_json
+
+    timestamps = [
+        int(datetime(2026, 1, day, tzinfo=UTC).timestamp())
+        for day in range(1, 7)
+    ]
+    payload = {
+        "chart": {
+            "error": None,
+            "result": [{
+                "timestamp": timestamps,
+                "indicators": {
+                    "quote": [{
+                        "open": [100, 99, None, 98, 101, 102],
+                        "high": [102, 100, None, 101, 103, 104],
+                        "low": [99, 97, None, 97, 100, 101],
+                        "close": [101, 98, None, 100, 102, 103],
+                        "volume": [10000, 12000, None, 14000, 15000, 16000],
+                    }],
+                    "adjclose": [{
+                        "adjclose": [101, 98, None, 100, 102, 103]
+                    }],
+                },
+            }],
+        }
+    }
+    batch = parse_yahoo_chart_json(
+        json.dumps(payload).encode(),
+        symbol="TEST.T",
+        source_url="https://example.test/chart",
+        as_of=date(2026, 1, 6),
+    )
+    assert len(batch.bars) == 5
+    assert batch.dropped_incomplete_rows == 1
+    assert len(batch.source_sha256) == 64
+
+
+def test_multistock_validation_filters_unaffordable_without_performance_selection():
+    from datetime import date
+
+    from backtest.multi_stock_runner import run_multi_stock_validation
+
+    closes = [
+        150, 149, 147, 148, 151, 149, 146, 148, 150, 147,
+        145, 148, 151, 149, 146, 149, 152, 150, 147, 151,
+        149, 146, 148, 150, 147, 145, 148, 151, 149, 146,
+        149, 152, 150, 147, 151, 149, 146, 148, 150, 147,
+    ]
+    batches = {
+        "A.T": _fake_market_batch("A.T", closes),
+        "B.T": _fake_market_batch("B.T", [x + 20 for x in closes]),
+        "C.T": _fake_market_batch("C.T", [x - 20 for x in closes]),
+        "EXP.T": _fake_market_batch("EXP.T", [500 + (x - 150) for x in closes]),
+    }
+
+    class Provider:
+        def load_batch(self, symbol, as_of=None):
+            return batches[symbol]
+
+    result = run_multi_stock_validation(
+        provider=Provider(),
+        symbols=("A.T", "B.T", "C.T", "EXP.T"),
+        as_of=date(2026, 2, 20),
+    )
+    assert result["summary"]["eligible_stock_count"] == 3
+    assert result["universe"]["performance_used_for_selection"] is False
+    assert "EXP.T" not in result["universe"]["eligible_symbols"]
+    assert any(
+        row["reason"] == "unaffordable_100_share_lot"
+        for row in result["universe"]["excluded"]
+    )
+    assert len(result["per_symbol"]) == 3
+    assert len(result["strategies"]) == 2
