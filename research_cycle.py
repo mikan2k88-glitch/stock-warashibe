@@ -5,6 +5,7 @@ import os
 import urllib.request
 
 from backtest.hypothesis_runner import run_hypothesis_ab_test
+from backtest.readiness_gate import run_real_data_readiness_gate
 from backtest.scenario_runner import run_all_scenarios
 
 
@@ -13,6 +14,7 @@ EVALUATOR_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-war
 REGISTRY_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-strategy-registry"
 QUEUE_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-queue"
 CONTROLLER_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-controller"
+READINESS_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-readiness-store"
 OIDC_AUDIENCE = "stock-warashibe-supabase"
 MAX_QUEUE_ITEMS_PER_CYCLE = 3
 MAX_GENERATION = 6
@@ -199,6 +201,26 @@ def main() -> int:
     queue_after = post_json(token, QUEUE_URL, {"action": "list"})
     active_after = post_json(token, REGISTRY_URL, {"action": "get_active"})
 
+    readiness = run_real_data_readiness_gate(
+        champion_spec=active_after.get("strategy"),
+    )
+    readiness_store = post_json(
+        token,
+        READINESS_URL,
+        {
+            "readiness_key": f"readiness-{run_id}-{attempt}",
+            "champion_strategy": readiness["champion_strategy"],
+            "data_mode": "csv_fixture",
+            "status": readiness["status"],
+            "checks": readiness["checks"],
+            "assumptions": readiness["assumptions"],
+            "evidence": {
+                **readiness["evidence"],
+                "github_sha": os.environ.get("GITHUB_SHA"),
+            },
+        },
+    )
+
     print(
         json.dumps(
             {
@@ -210,6 +232,8 @@ def main() -> int:
                 "controller_final": controller_final,
                 "queue_after": queue_after,
                 "active_strategy_after": active_after,
+                "real_data_readiness": readiness,
+                "readiness_store": readiness_store,
             },
             ensure_ascii=False,
             indent=2,

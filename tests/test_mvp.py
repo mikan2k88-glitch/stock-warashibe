@@ -169,3 +169,59 @@ def test_strategy_registry_builds_generation_five():
     strategy = build_strategy(generation_five_baseline())
     assert strategy.name == "mean_reversion_band_volume"
     assert strategy.tertiary_volume_ratio == 1.08
+
+
+def test_csv_provider_rejects_duplicate_dates(tmp_path):
+    from data.providers import CsvDailyBarProvider
+    from data.validation import DataValidationError
+
+    path = tmp_path / "bad.csv"
+    path.write_text(
+        "date,open,high,low,close,volume\n"
+        "2026-01-01,100,101,99,100,10000\n"
+        "2026-01-02,100,101,99,100,10000\n"
+        "2026-01-02,100,101,99,100,10000\n"
+        "2026-01-04,100,101,99,100,10000\n"
+        "2026-01-05,100,101,99,100,10000\n",
+        encoding="utf-8",
+    )
+
+    try:
+        CsvDailyBarProvider(path).load("TEST")
+    except DataValidationError as exc:
+        assert "duplicate" in str(exc)
+    else:
+        raise AssertionError("duplicate dates must fail closed")
+
+
+def test_guarded_execution_uses_next_bar_and_round_lot():
+    from backtest.readiness_gate import default_fixture_path, SYNTHETIC_CHAMPION_SPEC
+    from data.providers import CsvDailyBarProvider
+    from simulation.realistic_execution import simulate_guarded_next_bar_trade
+    from strategies.registry import build_strategy
+
+    bars = CsvDailyBarProvider(default_fixture_path()).load("FIXTURE")
+    result = simulate_guarded_next_bar_trade(
+        "FIXTURE",
+        bars,
+        30_000,
+        build_strategy(SYNTHETIC_CHAMPION_SPEC),
+    )
+
+    assert result is not None
+    assert result.decision_date == bars[2].date
+    assert result.entry_date == bars[3].date
+    assert result.exit_date == bars[4].date
+    assert result.shares % 100 == 0
+    assert result.buy_price > result.raw_entry_price
+    assert result.sell_price < result.raw_exit_price
+
+
+def test_real_data_readiness_gate_is_ready_without_live_data():
+    from backtest.readiness_gate import run_real_data_readiness_gate
+
+    result = run_real_data_readiness_gate()
+    assert result["status"] == "ready_for_historical_backtest"
+    assert result["live_trading"] is False
+    assert result["real_market_data_connected"] is False
+    assert all(result["checks"].values())
