@@ -409,14 +409,24 @@ def _fake_market_batch(symbol, closes, start_day=1):
 
 def test_yahoo_chart_parser_handles_null_row():
     import json
-    from datetime import date, datetime, UTC
+    from datetime import date, datetime, timedelta, UTC
 
     from data.yahoo_chart_provider import parse_yahoo_chart_json
 
+    start = datetime(2026, 1, 1, tzinfo=UTC)
     timestamps = [
-        int(datetime(2026, 1, day, tzinfo=UTC).timestamp())
-        for day in range(1, 7)
+        int((start + timedelta(days=index)).timestamp())
+        for index in range(21)
     ]
+    opens = [100 + index * 0.1 for index in range(21)]
+    highs = [value + 1 for value in opens]
+    lows = [value - 1 for value in opens]
+    closes = [value + 0.2 for value in opens]
+    volumes = [10_000 + index for index in range(21)]
+    adjclose = list(closes)
+    for values in (opens, highs, lows, closes, volumes, adjclose):
+        values[10] = None
+
     payload = {
         "chart": {
             "error": None,
@@ -424,15 +434,13 @@ def test_yahoo_chart_parser_handles_null_row():
                 "timestamp": timestamps,
                 "indicators": {
                     "quote": [{
-                        "open": [100, 99, None, 98, 101, 102],
-                        "high": [102, 100, None, 101, 103, 104],
-                        "low": [99, 97, None, 97, 100, 101],
-                        "close": [101, 98, None, 100, 102, 103],
-                        "volume": [10000, 12000, None, 14000, 15000, 16000],
+                        "open": opens,
+                        "high": highs,
+                        "low": lows,
+                        "close": closes,
+                        "volume": volumes,
                     }],
-                    "adjclose": [{
-                        "adjclose": [101, 98, None, 100, 102, 103]
-                    }],
+                    "adjclose": [{"adjclose": adjclose}],
                 },
             }],
         }
@@ -441,12 +449,11 @@ def test_yahoo_chart_parser_handles_null_row():
         json.dumps(payload).encode(),
         symbol="TEST.T",
         source_url="https://example.test/chart",
-        as_of=date(2026, 1, 6),
+        as_of=date(2026, 1, 21),
     )
-    assert len(batch.bars) == 5
+    assert len(batch.bars) == 20
     assert batch.dropped_incomplete_rows == 1
     assert len(batch.source_sha256) == 64
-
 
 def test_multistock_validation_filters_unaffordable_without_performance_selection():
     from datetime import date
