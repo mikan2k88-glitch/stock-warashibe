@@ -2,6 +2,17 @@ name: Stock Warashibe Research Cycle
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "backtest/**"
+      - "strategies/**"
+      - "risk/**"
+      - "simulation/**"
+      - "metrics/**"
+      - "research_cycle.py"
+      - ".github/workflows/research-cycle.yml"
 
 concurrency:
   group: stock-warashibe-research-cycle
