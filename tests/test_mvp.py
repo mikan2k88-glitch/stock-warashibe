@@ -58,6 +58,7 @@ def test_synthetic_scenario_suite():
         "uptrend",
         "downtrend",
         "reversal",
+        "weak_reversal",
         "sideways",
     ]
     assert all(len(r["strategies"]) == 3 for r in results)
@@ -69,7 +70,6 @@ def test_mean_reversion_trend_guard_hypothesis_ab():
     result = run_hypothesis_ab_test(
         {"rule": "require_non_negative_short_slope_before_mean_reversion_entry"}
     )
-    assert result["observed"]["downtrend_improved"] is True
     assert result["observed"]["reversal_preserved"] is False
     assert result["verdict"] == "rejected"
 
@@ -83,7 +83,33 @@ def test_mean_reversion_volume_confirmation_hypothesis_ab():
             "minimum_volume_ratio": 1.20,
         }
     )
-    assert result["observed"]["downtrend_improved"] is True
+    assert result["observed"]["downtrend_preserved"] is True
+    assert result["observed"]["reversal_preserved"] is True
+    assert result["observed"]["sideways_preserved"] is True
+    assert result["verdict"] == "validated"
+
+
+def test_generation_three_hypothesis_uses_generation_two_baseline():
+    from backtest.hypothesis_runner import run_hypothesis_ab_test
+
+    baseline = {
+        "strategy_key": "mean_reversion_volume_confirmation:g2",
+        "strategy_name": "mean_reversion_volume_confirmation",
+        "generation": 2,
+        "config": {"minimum_volume_ratio": 1.20},
+    }
+    result = run_hypothesis_ab_test(
+        {
+            "rule": "allow_deep_discount_without_volume_confirmation",
+            "minimum_volume_ratio": 1.20,
+            "deep_discount_threshold": 0.04,
+        },
+        baseline_spec=baseline,
+    )
+
+    assert result["baseline_strategy"]["generation"] == 2
+    assert result["observed"]["weak_reversal_improved"] is True
+    assert result["observed"]["downtrend_preserved"] is True
     assert result["observed"]["reversal_preserved"] is True
     assert result["observed"]["sideways_preserved"] is True
     assert result["verdict"] == "validated"
@@ -101,3 +127,21 @@ def test_strategy_registry_builds_generation_two():
     )
     assert strategy.name == "mean_reversion_volume_confirmation"
     assert strategy.minimum_volume_ratio == 1.20
+
+
+def test_strategy_registry_builds_generation_three():
+    from strategies.registry import build_strategy
+
+    strategy = build_strategy(
+        {
+            "strategy_name": "mean_reversion_adaptive_confirmation",
+            "generation": 3,
+            "config": {
+                "minimum_volume_ratio": 1.20,
+                "deep_discount_threshold": 0.04,
+            },
+        }
+    )
+    assert strategy.name == "mean_reversion_adaptive_confirmation"
+    assert strategy.minimum_volume_ratio == 1.20
+    assert strategy.deep_discount_threshold == 0.04

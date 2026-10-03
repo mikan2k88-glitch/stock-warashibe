@@ -4,6 +4,9 @@ from config import STARTING_CAPITAL
 from backtest.scenario_runner import scenario_bars
 from metrics.evaluator import evaluate_capital_path
 from simulation.trading_simulator import simulate_one_trade
+from strategies.mean_reversion_adaptive_confirmation import (
+    MeanReversionAdaptiveConfirmationStrategy,
+)
 from strategies.mean_reversion_trend_guard import MeanReversionTrendGuardStrategy
 from strategies.mean_reversion_volume_confirmation import (
     MeanReversionVolumeConfirmationStrategy,
@@ -42,6 +45,13 @@ def _candidate_for_rule(rule: str, proposed_change: dict):
         return MeanReversionVolumeConfirmationStrategy(
             minimum_volume_ratio=float(proposed_change.get("minimum_volume_ratio", 1.20))
         )
+    if rule == "allow_deep_discount_without_volume_confirmation":
+        return MeanReversionAdaptiveConfirmationStrategy(
+            minimum_volume_ratio=float(proposed_change.get("minimum_volume_ratio", 1.20)),
+            deep_discount_threshold=float(
+                proposed_change.get("deep_discount_threshold", 0.04)
+            ),
+        )
     raise ValueError(f"unsupported hypothesis rule: {rule}")
 
 
@@ -69,9 +79,9 @@ def run_hypothesis_ab_test(
         )
 
     by_scenario = {row["scenario"]: row for row in rows}
-    downtrend_improved = (
+    downtrend_preserved = (
         by_scenario["downtrend"]["candidate"]["final_capital"]
-        > by_scenario["downtrend"]["baseline"]["final_capital"]
+        >= by_scenario["downtrend"]["baseline"]["final_capital"]
     )
     reversal_preserved = (
         by_scenario["reversal"]["candidate"]["final_capital"]
@@ -81,12 +91,44 @@ def run_hypothesis_ab_test(
         by_scenario["sideways"]["candidate"]["final_capital"]
         >= by_scenario["sideways"]["baseline"]["final_capital"]
     )
-
-    verdict = (
-        "validated"
-        if downtrend_improved and reversal_preserved and sideways_preserved
-        else "rejected"
+    weak_reversal_improved = (
+        by_scenario["weak_reversal"]["candidate"]["final_capital"]
+        > by_scenario["weak_reversal"]["baseline"]["final_capital"]
     )
+
+    if rule == "allow_deep_discount_without_volume_confirmation":
+        verdict = (
+            "validated"
+            if (
+                weak_reversal_improved
+                and downtrend_preserved
+                and reversal_preserved
+                and sideways_preserved
+            )
+            else "rejected"
+        )
+        acceptance_criteria = {
+            "weak_reversal_improved": True,
+            "downtrend_result_preserved": True,
+            "reversal_gain_preserved": True,
+            "sideways_result_preserved": True,
+        }
+    else:
+        downtrend_improved = (
+            by_scenario["downtrend"]["candidate"]["final_capital"]
+            > by_scenario["downtrend"]["baseline"]["final_capital"]
+        )
+        verdict = (
+            "validated"
+            if downtrend_improved and reversal_preserved and sideways_preserved
+            else "rejected"
+        )
+        acceptance_criteria = {
+            "downtrend_loss_reduced": True,
+            "reversal_gain_preserved": True,
+            "sideways_result_preserved": True,
+        }
+
     return {
         "hypothesis_type": rule,
         "baseline_strategy": baseline_spec or {
@@ -95,15 +137,12 @@ def run_hypothesis_ab_test(
             "generation": 1,
             "config": {},
         },
-        "acceptance_criteria": {
-            "downtrend_loss_reduced": True,
-            "reversal_gain_preserved": True,
-            "sideways_result_preserved": True,
-        },
+        "acceptance_criteria": acceptance_criteria,
         "observed": {
-            "downtrend_improved": downtrend_improved,
+            "downtrend_preserved": downtrend_preserved,
             "reversal_preserved": reversal_preserved,
             "sideways_preserved": sideways_preserved,
+            "weak_reversal_improved": weak_reversal_improved,
         },
         "verdict": verdict,
         "comparisons": rows,
