@@ -48,3 +48,16 @@ def test_demo_comparison_has_three_strategies():
         "random",
     ]
     assert len(result["strategies"]) == 3
+
+
+def test_synthetic_scenario_suite():
+    from backtest.scenario_runner import run_all_scenarios
+
+    results = run_all_scenarios()
+    assert [r["scenario"] for r in results] == [
+        "uptrend",
+        "downtrend",
+        "reversal",
+        "sideways",
+    ]
+    assert all(len(r["strategies"]) == 3 for r in results)
