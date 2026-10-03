@@ -34,7 +34,7 @@ def post_json(token: str, payload: dict) -> dict:
             "Content-Type": "application/json",
         },
     )
-    with urllib.request.urlopen(req, timeout=30) as response:
+    with urllib.request.urlopen(req, timeout=60) as response:
         return json.load(response)
 
 

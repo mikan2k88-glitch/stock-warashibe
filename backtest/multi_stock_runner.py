@@ -30,7 +30,6 @@ def _candidate_entry_price(batch) -> float:
 def _aggregate_strategy(stock_results: list[dict], strategy_index: int) -> dict:
     rows = [row["result"]["strategies"][strategy_index] for row in stock_results]
     metrics = [row["metrics"] for row in rows]
-    trades = [trade for row in rows for trade in row.get("trades", [])]
     return {
         "strategy": rows[0]["strategy"],
         "traded": any(row["traded"] for row in rows),
@@ -49,8 +48,8 @@ def _aggregate_strategy(stock_results: list[dict], strategy_index: int) -> dict:
                 6,
             ),
         },
-        "trade": trades[0] if trades else None,
-        "trades": trades,
+        "trade": None,
+        "trades": [],
     }
 
 
