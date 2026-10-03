@@ -1,0 +1,27 @@
+name: Stock Warashibe Dev Queue
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 * * * *"
+
+concurrency:
+  group: stock-warashibe-dev-queue
+  cancel-in-progress: false
+
+jobs:
+  queue-executor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: python dev_queue_executor.py
