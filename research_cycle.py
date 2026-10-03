@@ -11,6 +11,7 @@ from backtest.scenario_runner import run_all_scenarios
 STORE_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-store"
 PLANNER_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-planner"
 EVALUATOR_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-hypothesis-evaluator"
+REGISTRY_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-strategy-registry"
 OIDC_AUDIENCE = "stock-warashibe-supabase"
 
 
@@ -62,6 +63,17 @@ def main() -> int:
             )
         )
 
+    registry_before = post_json(
+        token,
+        REGISTRY_URL,
+        {"action": "sync_validated"},
+    )
+    active_before = post_json(
+        token,
+        REGISTRY_URL,
+        {"action": "get_active"},
+    )
+
     planned = post_json(
         token,
         PLANNER_URL,
@@ -78,8 +90,14 @@ def main() -> int:
         "updated": False,
         "reason": "no_hypothesis_to_evaluate",
     }
+    registry_after = registry_before
+    active_after = active_before
+
     if hypothesis:
-        evaluation = run_hypothesis_ab_test(hypothesis["proposed_change"])
+        evaluation = run_hypothesis_ab_test(
+            hypothesis["proposed_change"],
+            baseline_spec=active_before.get("strategy"),
+        )
         evaluated = post_json(
             token,
             EVALUATOR_URL,
@@ -89,13 +107,27 @@ def main() -> int:
                 "evaluation": evaluation,
             },
         )
+        registry_after = post_json(
+            token,
+            REGISTRY_URL,
+            {"action": "sync_validated"},
+        )
+        active_after = post_json(
+            token,
+            REGISTRY_URL,
+            {"action": "get_active"},
+        )
 
     print(
         json.dumps(
             {
                 "stored": stored,
+                "strategy_registry_before": registry_before,
+                "active_strategy_before": active_before,
                 "planned_hypothesis": planned,
                 "hypothesis_evaluation": evaluated,
+                "strategy_registry_after": registry_after,
+                "active_strategy_after": active_after,
             },
             ensure_ascii=False,
             indent=2,
