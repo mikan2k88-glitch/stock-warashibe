@@ -542,3 +542,67 @@ def test_walk_forward_validation_reports_stability_without_tuning():
     assert 0 <= result["summary"]["positive_window_ratio"] <= 1
     assert 0 <= result["summary"]["outperformed_benchmark_window_ratio"] <= 1
     assert result["summary"]["champion_return_stdev"] >= 0
+
+
+def test_regime_classifier_uses_predeclared_thresholds():
+    from backtest.strategy_diagnosis import classify_regime
+    from data.stock_data_adapter import Bar
+
+    history = [
+        Bar("2026-01-01", 100, 101, 99, 100, 1000),
+        Bar("2026-01-02", 102, 103, 101, 102, 1000),
+        Bar("2026-01-03", 104, 105, 103, 104, 1000),
+        Bar("2026-01-04", 106, 107, 105, 106, 1000),
+    ]
+    test = [
+        Bar("2026-01-05", 106, 107, 105, 106, 1200),
+        Bar("2026-01-06", 107, 108, 106, 107, 1200),
+        Bar("2026-01-07", 108, 109, 107, 108, 1200),
+        Bar("2026-01-08", 109, 110, 108, 109, 1200),
+    ]
+    regime = classify_regime(history, test)
+    assert regime["trend"] == "up"
+    assert regime["volatility"] == "low"
+    assert regime["volume"] == "expanding"
+
+
+def test_strategy_diagnosis_keeps_g5_frozen_and_produces_research_input():
+    from datetime import date
+
+    from backtest.strategy_diagnosis import run_strategy_diagnosis
+
+    closes = []
+    for block in range(9):
+        base = 150 + block * 2
+        closes.extend([
+            base + 4, base + 2, base, base + 1, base + 3,
+            base + 1, base - 1, base + 1, base + 3, base,
+        ])
+    closes = (closes * 4)[:360]
+
+    batches = {
+        "A.T": _fake_market_batch("A.T", closes),
+        "B.T": _fake_market_batch("B.T", [x + 20 for x in closes]),
+        "C.T": _fake_market_batch("C.T", [x - 20 for x in closes]),
+    }
+
+    class Provider:
+        def load_batch(self, symbol, as_of=None):
+            return batches[symbol]
+
+    result = run_strategy_diagnosis(
+        provider=Provider(),
+        symbols=("A.T", "B.T", "C.T"),
+        as_of=date(2027, 1, 1),
+    )
+
+    assert result["live_trading"] is False
+    assert result["diagnosis"]["parameter_tuning"] is False
+    assert result["diagnosis"]["champion_frozen"] == "mean_reversion_band_volume:g5"
+    assert result["diagnosis"]["window_count"] >= 9
+    assert result["diagnosis"]["research_input"]["automatic_strategy_change"] is False
+    assert "primary_hypothesis" in result["diagnosis"]["research_input"]
+    assert set(result["diagnosis"]["grouped_regimes"]) == {
+        "trend", "volatility", "volume"
+    }
+    assert len(result["strategies"]) == 2
