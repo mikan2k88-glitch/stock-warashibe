@@ -66,7 +66,24 @@ def test_synthetic_scenario_suite():
 def test_mean_reversion_trend_guard_hypothesis_ab():
     from backtest.hypothesis_runner import run_hypothesis_ab_test
 
-    result = run_hypothesis_ab_test()
+    result = run_hypothesis_ab_test(
+        {"rule": "require_non_negative_short_slope_before_mean_reversion_entry"}
+    )
     assert result["observed"]["downtrend_improved"] is True
     assert result["observed"]["reversal_preserved"] is False
     assert result["verdict"] == "rejected"
+
+
+def test_mean_reversion_volume_confirmation_hypothesis_ab():
+    from backtest.hypothesis_runner import run_hypothesis_ab_test
+
+    result = run_hypothesis_ab_test(
+        {
+            "rule": "require_volume_acceleration_on_negative_slope",
+            "minimum_volume_ratio": 1.20,
+        }
+    )
+    assert result["observed"]["downtrend_improved"] is True
+    assert result["observed"]["reversal_preserved"] is True
+    assert result["observed"]["sideways_preserved"] is True
+    assert result["verdict"] == "validated"
