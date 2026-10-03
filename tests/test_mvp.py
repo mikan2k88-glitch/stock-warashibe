@@ -378,15 +378,15 @@ def test_remote_market_parser_drops_small_number_of_incomplete_rows():
 
 def _fake_market_batch(symbol, closes, start_day=1):
     import hashlib
+    from datetime import date, timedelta
 
     from data.remote_market_data import MarketDataBatch
     from data.stock_data_adapter import Bar
 
     bars = []
-    for index, close in enumerate(closes, start=start_day):
-        month = 1 + (index - 1) // 28
-        day = 1 + (index - 1) % 28
-        date_value = f"2026-{month:02d}-{day:02d}"
+    start_date = date(2026, 1, 1) + timedelta(days=start_day - 1)
+    for offset, close in enumerate(closes):
+        date_value = (start_date + timedelta(days=offset)).isoformat()
         bars.append(
             Bar(
                 date_value,
@@ -394,7 +394,7 @@ def _fake_market_batch(symbol, closes, start_day=1):
                 close + 1.0,
                 close - 1.0,
                 close,
-                1_000_000 + index,
+                1_000_000 + offset + start_day,
             )
         )
     digest = hashlib.sha256(symbol.encode()).hexdigest()
