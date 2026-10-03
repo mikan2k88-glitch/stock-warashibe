@@ -61,3 +61,12 @@ def test_synthetic_scenario_suite():
         "sideways",
     ]
     assert all(len(r["strategies"]) == 3 for r in results)
+
+
+def test_mean_reversion_trend_guard_hypothesis_ab():
+    from backtest.hypothesis_runner import run_hypothesis_ab_test
+
+    result = run_hypothesis_ab_test()
+    assert result["observed"]["downtrend_improved"] is True
+    assert result["observed"]["reversal_preserved"] is False
+    assert result["verdict"] == "rejected"
