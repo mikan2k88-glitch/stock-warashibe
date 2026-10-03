@@ -491,3 +491,54 @@ def test_multistock_validation_filters_unaffordable_without_performance_selectio
     )
     assert len(result["per_symbol"]) == 3
     assert len(result["strategies"]) == 2
+
+
+def test_walk_forward_window_slices_are_non_overlapping_oos_steps():
+    from backtest.walk_forward_runner import _window_slices
+
+    windows = _window_slices(360)
+    assert len(windows) == 4
+    assert windows[0] == (0, 180, 120)
+    assert windows[1] == (60, 240, 120)
+    assert windows[-1] == (180, 360, 120)
+
+
+def test_walk_forward_validation_reports_stability_without_tuning():
+    from datetime import date
+
+    from backtest.walk_forward_runner import run_walk_forward_validation
+
+    closes = []
+    for block in range(9):
+        base = 150 + block * 2
+        closes.extend([
+            base + 4, base + 2, base, base + 1, base + 3,
+            base + 1, base - 1, base + 1, base + 3, base,
+        ])
+
+    # 90 bars are not enough for the production window size, so repeat to 360.
+    closes = (closes * 4)[:360]
+    batches = {
+        "A.T": _fake_market_batch("A.T", closes),
+        "B.T": _fake_market_batch("B.T", [x + 20 for x in closes]),
+        "C.T": _fake_market_batch("C.T", [x - 20 for x in closes]),
+    }
+
+    class Provider:
+        def load_batch(self, symbol, as_of=None):
+            return batches[symbol]
+
+    result = run_walk_forward_validation(
+        provider=Provider(),
+        symbols=("A.T", "B.T", "C.T"),
+        as_of=date(2027, 1, 1),
+    )
+
+    assert result["live_trading"] is False
+    assert result["walk_forward"]["parameter_tuning"] is False
+    assert result["walk_forward"]["champion_frozen"] == "mean_reversion_band_volume:g5"
+    assert result["summary"]["eligible_symbol_count"] == 3
+    assert result["summary"]["evaluated_window_count"] >= 9
+    assert 0 <= result["summary"]["positive_window_ratio"] <= 1
+    assert 0 <= result["summary"]["outperformed_benchmark_window_ratio"] <= 1
+    assert result["summary"]["champion_return_stdev"] >= 0
