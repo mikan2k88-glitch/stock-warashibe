@@ -9,10 +9,11 @@ from backtest.scenario_runner import run_all_scenarios
 
 
 STORE_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-store"
-PLANNER_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-planner"
 EVALUATOR_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-hypothesis-evaluator"
 REGISTRY_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-strategy-registry"
+QUEUE_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-queue"
 OIDC_AUDIENCE = "stock-warashibe-supabase"
+MAX_QUEUE_ITEMS_PER_CYCLE = 2
 
 
 def get_oidc_token() -> str:
@@ -63,70 +64,67 @@ def main() -> int:
             )
         )
 
-    registry_before = post_json(
-        token,
-        REGISTRY_URL,
-        {"action": "sync_validated"},
-    )
-    active_before = post_json(
-        token,
-        REGISTRY_URL,
-        {"action": "get_active"},
-    )
+    registry_before = post_json(token, REGISTRY_URL, {"action": "sync_validated"})
+    seeded = post_json(token, QUEUE_URL, {"action": "seed"})
 
-    planned = post_json(
-        token,
-        PLANNER_URL,
-        {
-            "action": "plan_next_experiment",
-            "source_run_id": run_id,
-            "attempt": attempt,
-        },
-    )
+    processed = []
+    for _ in range(MAX_QUEUE_ITEMS_PER_CYCLE):
+        claimed = post_json(token, QUEUE_URL, {"action": "claim_next"})
+        item = claimed.get("item")
+        if not item:
+            processed.append({"claim": claimed, "processed": False})
+            break
 
-    hypothesis = planned.get("hypothesis")
-    evaluated = {
-        "ok": True,
-        "updated": False,
-        "reason": "no_hypothesis_to_evaluate",
-    }
-    registry_after = registry_before
-    active_after = active_before
-
-    if hypothesis:
+        active = claimed.get("active_strategy")
         evaluation = run_hypothesis_ab_test(
-            hypothesis["proposed_change"],
-            baseline_spec=active_before.get("strategy"),
+            item["proposed_change"],
+            baseline_spec=active,
         )
         evaluated = post_json(
             token,
             EVALUATOR_URL,
             {
                 "action": "evaluate_proposed_hypothesis",
-                "hypothesis_key": hypothesis["hypothesis_key"],
+                "hypothesis_key": item["hypothesis_key"],
                 "evaluation": evaluation,
             },
         )
-        registry_after = post_json(
+        finalized = post_json(
+            token,
+            QUEUE_URL,
+            {
+                "action": "finalize",
+                "queue_key": item["queue_key"],
+                "verdict": evaluation["verdict"],
+                "result": evaluation,
+            },
+        )
+        registry_after_item = post_json(
             token,
             REGISTRY_URL,
             {"action": "sync_validated"},
         )
-        active_after = post_json(
-            token,
-            REGISTRY_URL,
-            {"action": "get_active"},
+        processed.append(
+            {
+                "claim": claimed,
+                "evaluation": evaluated,
+                "queue_finalized": finalized,
+                "registry_sync": registry_after_item,
+                "processed": True,
+            }
         )
+
+    queue_after = post_json(token, QUEUE_URL, {"action": "list"})
+    active_after = post_json(token, REGISTRY_URL, {"action": "get_active"})
 
     print(
         json.dumps(
             {
                 "stored": stored,
                 "strategy_registry_before": registry_before,
-                "active_strategy_before": active_before,
-                "planned_hypothesis": planned,
-                "hypothesis_evaluation": evaluated,
-                "strategy_registry_after": registry_after,
+                "queue_seed": seeded,
+                "processed_queue_items": processed,
+                "queue_after": queue_after,
                 "active_strategy_after": active_after,
             },
             ensure_ascii=False,

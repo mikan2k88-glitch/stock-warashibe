@@ -4,6 +4,9 @@ from strategies.mean_reversion import MeanReversionStrategy
 from strategies.mean_reversion_adaptive_confirmation import (
     MeanReversionAdaptiveConfirmationStrategy,
 )
+from strategies.mean_reversion_secondary_volume import (
+    MeanReversionSecondaryVolumeStrategy,
+)
 from strategies.mean_reversion_volume_confirmation import (
     MeanReversionVolumeConfirmationStrategy,
 )
@@ -28,6 +31,16 @@ def build_strategy(spec: dict | None = None):
         return MeanReversionAdaptiveConfirmationStrategy(
             minimum_volume_ratio=float(config.get("minimum_volume_ratio", 1.20)),
             deep_discount_threshold=float(config.get("deep_discount_threshold", 0.04)),
+        )
+
+    if name == "mean_reversion_secondary_volume":
+        return MeanReversionSecondaryVolumeStrategy(
+            minimum_volume_ratio=float(config.get("minimum_volume_ratio", 1.20)),
+            deep_discount_threshold=float(config.get("deep_discount_threshold", 0.04)),
+            moderate_discount_threshold=float(
+                config.get("moderate_discount_threshold", 0.03)
+            ),
+            secondary_volume_ratio=float(config.get("secondary_volume_ratio", 1.09)),
         )
 
     raise ValueError(f"unsupported registered strategy: {name}")
