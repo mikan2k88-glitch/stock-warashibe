@@ -62,17 +62,7 @@ def main() -> int:
             )
         )
 
-    evaluation = run_hypothesis_ab_test()
-    evaluated = post_json(
-        token,
-        EVALUATOR_URL,
-        {
-            "action": "evaluate_proposed_hypothesis",
-            "evaluation": evaluation,
-        },
-    )
-
-    hypothesis = post_json(
+    planned = post_json(
         token,
         PLANNER_URL,
         {
@@ -82,12 +72,30 @@ def main() -> int:
         },
     )
 
+    hypothesis = planned.get("hypothesis")
+    evaluated = {
+        "ok": True,
+        "updated": False,
+        "reason": "no_hypothesis_to_evaluate",
+    }
+    if hypothesis:
+        evaluation = run_hypothesis_ab_test(hypothesis["proposed_change"])
+        evaluated = post_json(
+            token,
+            EVALUATOR_URL,
+            {
+                "action": "evaluate_proposed_hypothesis",
+                "hypothesis_key": hypothesis["hypothesis_key"],
+                "evaluation": evaluation,
+            },
+        )
+
     print(
         json.dumps(
             {
                 "stored": stored,
+                "planned_hypothesis": planned,
                 "hypothesis_evaluation": evaluated,
-                "next_hypothesis": hypothesis,
             },
             ensure_ascii=False,
             indent=2,
