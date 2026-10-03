@@ -87,3 +87,17 @@ def test_mean_reversion_volume_confirmation_hypothesis_ab():
     assert result["observed"]["reversal_preserved"] is True
     assert result["observed"]["sideways_preserved"] is True
     assert result["verdict"] == "validated"
+
+
+def test_strategy_registry_builds_generation_two():
+    from strategies.registry import build_strategy
+
+    strategy = build_strategy(
+        {
+            "strategy_name": "mean_reversion_volume_confirmation",
+            "generation": 2,
+            "config": {"minimum_volume_ratio": 1.20},
+        }
+    )
+    assert strategy.name == "mean_reversion_volume_confirmation"
+    assert strategy.minimum_volume_ratio == 1.20
