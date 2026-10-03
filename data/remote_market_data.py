@@ -24,6 +24,7 @@ class MarketDataBatch:
     adjusted_close: tuple[float, ...]
     source_url: str
     source_sha256: str
+    dropped_incomplete_rows: int = 0
     price_mode: str = "unadjusted_ohlc"
 
 
@@ -40,16 +41,28 @@ def parse_market_csv(
 ) -> MarketDataBatch:
     rows = []
     adjusted = []
+    dropped_incomplete_rows = 0
 
     reader = csv.DictReader(io.StringIO(text))
     required = {"Date", "Open", "High", "Low", "Close", "Volume"}
     if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
         raise DataValidationError("market csv is missing required OHLCV columns")
 
-    for row in reader:
-        raw_date = str(row["Date"]).strip()
-        if not raw_date:
+    raw_rows = list(reader)
+    for row in raw_rows:
+        raw_date = str(row.get("Date") or "").strip()
+        required_values = [
+            raw_date,
+            str(row.get("Open") or "").strip(),
+            str(row.get("High") or "").strip(),
+            str(row.get("Low") or "").strip(),
+            str(row.get("Close") or "").strip(),
+            str(row.get("Volume") or "").strip(),
+        ]
+        if not all(required_values):
+            dropped_incomplete_rows += 1
             continue
+
         bar = Bar(
             date=raw_date,
             open=float(row["Open"]),
@@ -62,6 +75,13 @@ def parse_market_csv(
         adj_value = row.get("Adj Close")
         adjusted.append(float(adj_value) if adj_value not in (None, "") else bar.close)
 
+    if raw_rows:
+        incomplete_ratio = dropped_incomplete_rows / len(raw_rows)
+        if incomplete_ratio > 0.02:
+            raise DataValidationError(
+                f"too many incomplete rows: {dropped_incomplete_rows}/{len(raw_rows)}"
+            )
+
     validate_daily_bars(rows, as_of=as_of)
     _guard_corporate_actions(rows, adjusted)
 
@@ -71,6 +91,7 @@ def parse_market_csv(
         adjusted_close=tuple(adjusted),
         source_url=source_url,
         source_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        dropped_incomplete_rows=dropped_incomplete_rows,
     )
 
 

@@ -188,6 +188,7 @@ def run_historical_market_backtest(
             "bar_count": len(bars),
             "first_date": bars[0].date,
             "last_date": bars[-1].date,
+            "dropped_incomplete_rows": market_batch.dropped_incomplete_rows,
         },
         "summary": {
             "champion_strategy": spec["strategy_key"],
