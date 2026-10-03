@@ -4,11 +4,13 @@ import json
 import os
 import urllib.request
 
+from backtest.hypothesis_runner import run_hypothesis_ab_test
 from backtest.scenario_runner import run_all_scenarios
 
 
 STORE_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-store"
 PLANNER_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-planner"
+EVALUATOR_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-hypothesis-evaluator"
 OIDC_AUDIENCE = "stock-warashibe-supabase"
 
 
@@ -60,6 +62,16 @@ def main() -> int:
             )
         )
 
+    evaluation = run_hypothesis_ab_test()
+    evaluated = post_json(
+        token,
+        EVALUATOR_URL,
+        {
+            "action": "evaluate_proposed_hypothesis",
+            "evaluation": evaluation,
+        },
+    )
+
     hypothesis = post_json(
         token,
         PLANNER_URL,
@@ -72,7 +84,11 @@ def main() -> int:
 
     print(
         json.dumps(
-            {"stored": stored, "next_hypothesis": hypothesis},
+            {
+                "stored": stored,
+                "hypothesis_evaluation": evaluated,
+                "next_hypothesis": hypothesis,
+            },
             ensure_ascii=False,
             indent=2,
         )
