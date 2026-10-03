@@ -1,5 +1,7 @@
 from flask import Flask, jsonify
 
+from backtest.demo_runner import run_demo_comparison
+
 app = Flask(__name__)
 
 
@@ -11,6 +13,11 @@ def index():
 @app.get("/health")
 def health():
     return jsonify({"status": "ok"})
+
+
+@app.get("/backtest/demo")
+def backtest_demo():
+    return jsonify(run_demo_comparison())
 
 
 if __name__ == "__main__":
