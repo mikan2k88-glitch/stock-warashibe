@@ -4,11 +4,11 @@ from config import STARTING_CAPITAL
 from backtest.scenario_runner import scenario_bars
 from metrics.evaluator import evaluate_capital_path
 from simulation.trading_simulator import simulate_one_trade
-from strategies.mean_reversion import MeanReversionStrategy
 from strategies.mean_reversion_trend_guard import MeanReversionTrendGuardStrategy
 from strategies.mean_reversion_volume_confirmation import (
     MeanReversionVolumeConfirmationStrategy,
 )
+from strategies.registry import build_strategy
 
 
 def _run(strategy, bars):
@@ -45,13 +45,17 @@ def _candidate_for_rule(rule: str, proposed_change: dict):
     raise ValueError(f"unsupported hypothesis rule: {rule}")
 
 
-def run_hypothesis_ab_test(proposed_change: dict) -> dict:
+def run_hypothesis_ab_test(
+    proposed_change: dict,
+    baseline_spec: dict | None = None,
+) -> dict:
     rule = str(proposed_change["rule"])
+    baseline_strategy = build_strategy(baseline_spec)
     candidate_strategy = _candidate_for_rule(rule, proposed_change)
 
     rows = []
     for scenario, bars in scenario_bars().items():
-        baseline = _run(MeanReversionStrategy(), bars)
+        baseline = _run(baseline_strategy, bars)
         candidate = _run(candidate_strategy, bars)
         rows.append(
             {
@@ -85,6 +89,12 @@ def run_hypothesis_ab_test(proposed_change: dict) -> dict:
     )
     return {
         "hypothesis_type": rule,
+        "baseline_strategy": baseline_spec or {
+            "strategy_key": "mean_reversion:g1",
+            "strategy_name": "mean_reversion",
+            "generation": 1,
+            "config": {},
+        },
         "acceptance_criteria": {
             "downtrend_loss_reduced": True,
             "reversal_gain_preserved": True,
