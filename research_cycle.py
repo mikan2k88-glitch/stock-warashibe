@@ -8,6 +8,7 @@ from backtest.scenario_runner import run_all_scenarios
 
 
 STORE_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-store"
+PLANNER_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-research-planner"
 OIDC_AUDIENCE = "stock-warashibe-supabase"
 
 
@@ -24,9 +25,9 @@ def get_oidc_token() -> str:
         return json.load(response)["value"]
 
 
-def store(token: str, payload: dict) -> dict:
+def post_json(token: str, url: str, payload: dict) -> dict:
     req = urllib.request.Request(
-        STORE_URL,
+        url,
         data=json.dumps(payload).encode(),
         method="POST",
         headers={
@@ -48,8 +49,9 @@ def main() -> int:
         scenario = result["scenario"]
         run_key = f"synthetic-{scenario}-{run_id}-{attempt}"
         stored.append(
-            store(
+            post_json(
                 token,
+                STORE_URL,
                 {
                     "run_key": run_key,
                     "scenario_key": f"synthetic-{scenario}",
@@ -58,7 +60,23 @@ def main() -> int:
             )
         )
 
-    print(json.dumps({"stored": stored}, ensure_ascii=False, indent=2))
+    hypothesis = post_json(
+        token,
+        PLANNER_URL,
+        {
+            "action": "plan_next_experiment",
+            "source_run_id": run_id,
+            "attempt": attempt,
+        },
+    )
+
+    print(
+        json.dumps(
+            {"stored": stored, "next_hypothesis": hypothesis},
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     return 0
 
 
