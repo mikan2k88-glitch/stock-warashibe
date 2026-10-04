@@ -1,0 +1,26 @@
+name: G6 Robustness Acceptance Gate
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  robustness-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run full tests
+        run: python -m pytest -q
+      - name: Run endpoints 017 through 019
+        run: python robustness_validation.py

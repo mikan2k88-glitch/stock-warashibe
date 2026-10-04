@@ -776,3 +776,87 @@ def test_g6_post_promotion_synthetic_regression_passes():
     assert result["checks"]["core_scenarios_preserved"] is True
     assert result["checks"]["cost_churn_improved"] is True
     assert result["live_trading"] is False
+
+
+def test_coverage_guard_requires_long_non_stale_history():
+    from datetime import date, timedelta
+
+    from data.coverage_guard import assess_coverage
+    from data.remote_market_data import MarketDataBatch
+    from data.stock_data_adapter import Bar
+
+    start = date(2023, 1, 1)
+    bars = []
+    for index in range(800):
+        day = start + timedelta(days=index)
+        close = 100 + (index % 7) * 0.1
+        bars.append(Bar(day.isoformat(), close, close + 1, close - 1, close, 10000))
+    batch = MarketDataBatch(
+        symbol="TEST.T",
+        bars=tuple(bars),
+        adjusted_close=tuple(bar.close for bar in bars),
+        source_url="https://example.test/test",
+        source_sha256="a" * 64,
+    )
+    result = assess_coverage(
+        batch,
+        as_of=date.fromisoformat(bars[-1].date),
+    )
+    assert result["accepted"] is False
+    assert result["checks"]["minimum_bars"] is True
+    assert result["checks"]["minimum_calendar_span"] is False
+
+
+def test_robustness_gate_blocks_paper_trading_without_point_in_time_universe():
+    from datetime import date, timedelta
+
+    from backtest.robustness_runner import run_robustness_validation
+    from backtest.robustness_universe import UniverseMember
+    from data.remote_market_data import MarketDataBatch
+    from data.stock_data_adapter import Bar
+
+    start = date(2022, 1, 1)
+    members = tuple(
+        UniverseMember(f"T{index}.T", f"sector-{index % 4}")
+        for index in range(8)
+    )
+    batches = {}
+    for member_index, member in enumerate(members):
+        bars = []
+        for index in range(1200):
+            day = start + timedelta(days=index)
+            close = 120 + member_index * 2 + ((index % 20) - 10) * 0.2
+            bars.append(
+                Bar(
+                    day.isoformat(),
+                    close + 0.1,
+                    close + 1,
+                    close - 1,
+                    close,
+                    100000 + index,
+                )
+            )
+        batches[member.symbol] = MarketDataBatch(
+            symbol=member.symbol,
+            bars=tuple(bars),
+            adjusted_close=tuple(bar.close for bar in bars),
+            source_url=f"https://example.test/{member.symbol}",
+            source_sha256=(str(member_index + 1) * 64)[:64],
+        )
+
+    class Provider:
+        def load_batch(self, symbol, as_of=None):
+            return batches[symbol]
+
+    as_of = date.fromisoformat(next(iter(batches.values())).bars[-1].date)
+    result = run_robustness_validation(
+        provider=Provider(),
+        universe=members,
+        as_of=as_of,
+    )
+    assert result["summary"]["eligible_symbol_count"] == 8
+    assert result["summary"]["sector_count"] == 4
+    assert result["robustness"]["parameter_tuning"] is False
+    assert result["robustness"]["gate"]["hard_checks"]["point_in_time_universe_verified"] is False
+    assert result["robustness"]["gate"]["paper_trading_allowed"] is False
+    assert result["summary"]["gate_decision"] == "research_hold_bias_guard"
