@@ -916,3 +916,97 @@ def test_robustness_failure_diagnosis_prioritizes_bias_and_dispersion():
     assert "point_in_time_universe_unverified" in result["root_causes"]
     assert "high_return_dispersion" in result["root_causes"]
     assert result["priority_actions"][0] == "reconstruct_point_in_time_universe"
+
+
+def test_delisted_parser_extracts_official_style_rows():
+    from datetime import date
+
+    from data.jpx_delisted import parse_delisted_html
+
+    raw = b"""
+    <table><tbody>
+      <tr><td>Oct. 1, 2026</td><td>Example Corp</td><td>1234</td><td>Standard</td><td>Acquisition</td></tr>
+    </tbody></table>
+    """
+    rows = parse_delisted_html(raw, as_of=date(2026, 10, 4))
+    assert len(rows) == 1
+    assert rows[0].symbol == "1234.T"
+    assert rows[0].delisted_at == "2026-10-01"
+
+
+def test_paper_readiness_fails_closed_when_research_gate_is_on_hold():
+    from paper.readiness import assess_paper_readiness
+
+    retest = {
+        "status": "research_hold",
+        "point_in_time_verified": False,
+        "robustness_gate_score": 20,
+        "minimum_gate_score": 70,
+    }
+    result = assess_paper_readiness(
+        retest,
+        data_fresh=True,
+        active_strategy_key="mean_reversion_cost_floor:g6",
+    )
+    assert result["status"] == "blocked"
+    assert result["paper_trading_allowed"] is False
+    assert result["live_trading_allowed"] is False
+
+
+def test_paper_accounting_round_trip_updates_capital_without_live_order():
+    from paper.accounting import close_position, open_position
+
+    opened = open_position(
+        capital=30000,
+        symbol="9432.T",
+        shares=100,
+        fill_price=150.0,
+    )
+    closed = close_position(opened, exit_price=155.0)
+    assert closed["paper_only"] is True
+    assert closed["position_open"] is False
+    assert closed["capital_after"] > closed["capital_before"]
+
+
+def test_approval_request_uses_8888_and_never_creates_live_order():
+    from paper.notifications import build_approval_request
+
+    candidate = {
+        "selected": {
+            "symbol": "9432.T",
+            "shares": 100,
+            "close": 150.0,
+            "lot_cost": 15000.0,
+            "reason": "test",
+        }
+    }
+    proposal = {
+        "status": "proposed",
+        "order": {"live_order": False},
+    }
+    request = build_approval_request(
+        candidate,
+        proposal,
+        request_key="test-request",
+        session_key="test-session",
+    )
+    assert request["status"] == "pending"
+    assert request["approval_code_hint"] == "8888"
+    assert request["payload"]["live_order"] is False
+
+
+def test_live_readiness_never_enables_live_trading_automatically():
+    from paper.live_readiness import assess_live_readiness
+
+    paper = {"paper_trading_allowed": True}
+    result = assess_live_readiness(
+        paper,
+        closed_paper_trades=20,
+        paper_days=30,
+        broker_connected=False,
+        live_secret_configured=False,
+    )
+    assert result["status"] == "ready_for_human_gate"
+    assert result["research_ready_for_human_gate"] is True
+    assert result["human_gate_required"] is True
+    assert result["live_trading_allowed"] is False

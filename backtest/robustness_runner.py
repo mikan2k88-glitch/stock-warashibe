@@ -11,6 +11,7 @@ from backtest.walk_forward_runner import _entry_lot_cost, _slice_batch, _window_
 from config import STARTING_CAPITAL
 from data.coverage_guard import assess_coverage
 from data.yahoo_chart_provider import YahooChartDailyBarProvider
+from strategies.registry import build_strategy
 
 
 MIN_ELIGIBLE_SYMBOLS = 8
@@ -184,6 +185,7 @@ def run_robustness_validation(
                 })
                 continue
 
+            latest_signal = build_strategy(CURRENT_CHAMPION_SPEC).evaluate(bars[-3:])
             coverage.append(coverage_result)
             eligible.append({
                 "symbol": member.symbol,
@@ -193,6 +195,13 @@ def run_robustness_validation(
                 "window_count": len(windows),
                 "mean_return": round(mean(w["champion_return"] for w in windows), 6),
                 "benchmark_mean_return": round(mean(w["benchmark_return"] for w in windows), 6),
+                "latest_snapshot": {
+                    "date": bars[-1].date,
+                    "close": bars[-1].close,
+                    "action": latest_signal.action,
+                    "score": latest_signal.score,
+                    "reason": latest_signal.reason,
+                },
                 "windows": windows,
             })
         except Exception as exc:
