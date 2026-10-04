@@ -1379,3 +1379,181 @@ def test_real_trial_adapter_never_sends_live_order():
     assert manual["status"] == "ready_for_manual_execution"
     assert manual["live_order_sent"] is False
     assert manual["live_trading_allowed"] is False
+
+
+def test_runtime_status_reports_collecting_without_false_live_progression():
+    from datetime import date
+    from operations.status_monitor import build_runtime_status
+
+    context = {
+        "shadow_readiness": {
+            "status": "collecting",
+            "observation_days": 1,
+            "evaluated_buy_signals": 0,
+            "reopen_gate": {
+                "status": "blocked",
+                "decision": "waiting",
+                "paper_trading_allowed": False,
+            },
+        },
+        "observations": [
+            {"observation_date": "2026-10-02"}
+        ],
+        "paper_sessions": [],
+        "paper_orders": [],
+        "active_strategy": {
+            "strategy_key": "mean_reversion_cost_floor:g6"
+        },
+        "latest_performance": {"status": "blocked"},
+        "live_trading_allowed": False,
+        "broker_connected": False,
+    }
+    result = build_runtime_status(
+        context,
+        as_of=date(2026, 10, 4),
+        run_id="test",
+    )
+    assert result["endpoint"] == "044"
+    assert result["status"] == "collecting"
+    assert result["summary"]["paper_trading_allowed"] is False
+    assert result["summary"]["live_trading_allowed"] is False
+
+
+def test_alert_engine_opens_critical_if_paper_session_started_early():
+    from datetime import date
+    from operations.alert_engine import build_runtime_alerts
+
+    context = {
+        "shadow_readiness": {
+            "reopen_gate": {"paper_trading_allowed": False}
+        },
+        "observations": [],
+        "paper_sessions": [
+            {"session_key": "bad", "status": "active"}
+        ],
+        "paper_orders": [],
+    }
+    runtime_status = {
+        "checks": {"active_strategy_is_g6": True, "shadow_readiness_present": True},
+        "summary": {"latest_observation_age_days": 0, "active_strategy": "mean_reversion_cost_floor:g6"},
+    }
+    integrity = {"status": "collecting", "failures": []}
+    alerts = build_runtime_alerts(
+        context,
+        runtime_status,
+        integrity,
+        as_of=date(2026, 10, 4),
+        run_id="test",
+    )
+    early = next(row for row in alerts if row["alert_key"] == "runtime:paper_started_early")
+    assert early["status"] == "open"
+    assert early["severity"] == "critical"
+
+
+def test_evidence_integrity_collects_before_sample_minimum():
+    from datetime import date
+    from operations.evidence_integrity import audit_evidence_integrity
+
+    observations = [
+        {
+            "observation_key": "g6-shadow:9432.T:2026-10-02",
+            "observation_date": "2026-10-02",
+            "symbol": "9432.T",
+            "sector": "telecom",
+            "signal": "buy",
+            "status": "pending",
+            "source_sha256": "a" * 64,
+            "live_trading": False,
+            "outcome": {},
+        }
+    ]
+    result = audit_evidence_integrity(
+        observations,
+        as_of=date(2026, 10, 4),
+        run_id="test",
+    )
+    assert result["endpoint"] == "046"
+    assert result["status"] == "collecting"
+    assert all(result["checks"].values())
+    assert result["sample_ready"] is False
+
+
+def test_evidence_integrity_fails_duplicate_symbol_date():
+    from datetime import date
+    from operations.evidence_integrity import audit_evidence_integrity
+
+    base = {
+        "observation_date": "2026-10-02",
+        "symbol": "9432.T",
+        "sector": "telecom",
+        "signal": "skip",
+        "status": "pending",
+        "source_sha256": "a" * 64,
+        "live_trading": False,
+        "outcome": {},
+    }
+    observations = [
+        {"observation_key": "one", **base},
+        {"observation_key": "two", **base},
+    ]
+    result = audit_evidence_integrity(
+        observations,
+        as_of=date(2026, 10, 4),
+        run_id="test",
+    )
+    assert result["status"] == "failed"
+    assert result["checks"]["symbol_date_pairs_unique"] is False
+
+
+def test_transition_controller_waits_until_reopen_and_integrity_pass():
+    from operations.transition_controller import run_transition_controller
+
+    context = {
+        "shadow_readiness": {
+            "reopen_gate": {"paper_trading_allowed": False}
+        },
+        "active_strategy": {
+            "strategy_key": "mean_reversion_cost_floor:g6"
+        },
+        "paper_sessions": [],
+        "live_trading_allowed": False,
+        "broker_connected": False,
+    }
+    result = run_transition_controller(
+        context,
+        {"status": "collecting"},
+        [],
+        run_id="test",
+    )
+    assert result["endpoint"] == "047"
+    assert result["status"] == "blocked"
+    assert result["decision"] == "waiting_for_paper_gate_reopen"
+    assert result["session"] is None
+    assert result["live_trading_allowed"] is False
+
+
+def test_transition_controller_can_start_paper_but_never_live():
+    from operations.transition_controller import run_transition_controller
+
+    context = {
+        "shadow_readiness": {
+            "reopen_gate": {"paper_trading_allowed": True}
+        },
+        "active_strategy": {
+            "strategy_key": "mean_reversion_cost_floor:g6"
+        },
+        "paper_sessions": [],
+        "live_trading_allowed": False,
+        "broker_connected": False,
+    }
+    result = run_transition_controller(
+        context,
+        {"status": "passed"},
+        [],
+        run_id="test",
+    )
+    assert result["status"] == "applied"
+    assert result["session"]["status"] == "active"
+    assert result["session"]["live_trading"] is False
+    assert result["live_trading_allowed"] is False
+    assert result["broker_connected"] is False
