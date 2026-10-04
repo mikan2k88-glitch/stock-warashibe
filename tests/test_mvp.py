@@ -860,3 +860,59 @@ def test_robustness_gate_blocks_paper_trading_without_point_in_time_universe():
     assert result["robustness"]["gate"]["hard_checks"]["point_in_time_universe_verified"] is False
     assert result["robustness"]["gate"]["paper_trading_allowed"] is False
     assert result["summary"]["gate_decision"] == "research_hold_bias_guard"
+
+
+def test_point_in_time_provenance_fails_closed_without_historical_membership():
+    from data.universe_provenance import assess_point_in_time_readiness
+
+    result = assess_point_in_time_readiness(
+        current_manifest_frozen=True,
+        current_universe_size=20,
+        delisted_records_loaded=0,
+        historical_membership_snapshots_loaded=0,
+        paid_source_enabled=False,
+    )
+    assert result["verified"] is False
+    assert result["decision"] == "point_in_time_data_required"
+    assert result["checks"]["paid_source_not_auto_enabled"] is True
+
+
+def test_robustness_failure_diagnosis_prioritizes_bias_and_dispersion():
+    from research.robustness_failure_diagnosis import diagnose_robustness_failure
+
+    robustness = {
+        "summary": {
+            "champion_strategy": "mean_reversion_cost_floor:g6",
+            "champion_mean_return": -0.013,
+            "positive_window_ratio": 0.39,
+            "outperformed_benchmark_window_ratio": 0.48,
+            "champion_return_stdev": 0.21,
+        },
+        "robustness": {
+            "gate": {
+                "decision": "research_hold_bias_guard",
+                "soft_score": 20,
+                "soft_checks": {
+                    "mean_return_not_below_minus_1pct": False,
+                    "positive_window_ratio_at_least_40pct": False,
+                    "benchmark_outperform_ratio_at_least_45pct": True,
+                    "return_stdev_below_20pct": False,
+                },
+            },
+            "sector_metrics": [
+                {
+                    "sector": "financials",
+                    "mean_champion_return": -0.09,
+                    "mean_excess_return": -0.08,
+                    "window_count": 5,
+                }
+            ],
+        },
+    }
+    provenance = {"verified": False}
+    result = diagnose_robustness_failure(robustness, provenance)
+    assert result["paper_trading_allowed"] is False
+    assert result["automatic_strategy_change"] is False
+    assert "point_in_time_universe_unverified" in result["root_causes"]
+    assert "high_return_dispersion" in result["root_causes"]
+    assert result["priority_actions"][0] == "reconstruct_point_in_time_universe"
