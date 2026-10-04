@@ -92,30 +92,59 @@ def parse_listed_page(raw: bytes) -> tuple[str, date]:
 
 
 def _find_header(ws) -> tuple[int, dict[str, int]]:
-    for row_index in range(1, min(ws.max_row, 20) + 1):
+    for row_index in range(1, min(ws.max_row, 50) + 1):
         values = [
             str(ws.cell(row_index, col).value or "").strip()
-            for col in range(1, ws.max_column + 1)
+            for col in range(1, min(ws.max_column, 40) + 1)
         ]
         normalized = {value.lower(): idx + 1 for idx, value in enumerate(values) if value}
-        code_col = next((col for label, col in normalized.items() if label == "code"), None)
+        code_col = next(
+            (
+                col
+                for label, col in normalized.items()
+                if label == "code" or "issue code" in label or "security code" in label
+            ),
+            None,
+        )
         name_col = next(
-            (col for label, col in normalized.items() if "issue name" in label or label == "name"),
+            (
+                col
+                for label, col in normalized.items()
+                if "issue name" in label or "company name" in label or label == "name"
+            ),
             None,
         )
         market_col = next(
-            (col for label, col in normalized.items() if "market" in label and "product" in label),
+            (
+                col
+                for label, col in normalized.items()
+                if "market" in label or "product" in label
+            ),
             None,
         )
         if code_col and name_col and market_col:
             return row_index, {"code": code_col, "name": name_col, "market": market_col}
-    raise ValueError("JPX listed-issues workbook header not found")
+    raise ValueError(f"header not found in sheet {ws.title!r}")
 
 
 def parse_listed_workbook(raw: bytes, *, snapshot_date: date) -> list[ListedIssue]:
     wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
-    ws = wb[wb.sheetnames[0]]
-    header_row, cols = _find_header(ws)
+    selected = None
+    failures = []
+    for ws in wb.worksheets:
+        try:
+            header_row, cols = _find_header(ws)
+            selected = (ws, header_row, cols)
+            break
+        except ValueError as exc:
+            failures.append(str(exc))
+    if selected is None:
+        raise ValueError(
+            "JPX listed-issues workbook header not found; "
+            + "; ".join(failures[:5])
+        )
+
+    ws, header_row, cols = selected
     issues: list[ListedIssue] = []
     seen: set[str] = set()
 
@@ -140,6 +169,10 @@ def parse_listed_workbook(raw: bytes, *, snapshot_date: date) -> list[ListedIssu
                 market_segment=market,
                 snapshot_date=snapshot_date.isoformat(),
             )
+        )
+    if not issues:
+        raise ValueError(
+            f"JPX listed-issues workbook produced zero domestic stock rows from {ws.title!r}"
         )
     return issues
 
