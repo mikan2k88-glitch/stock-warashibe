@@ -703,6 +703,7 @@ def test_generation_candidate_validation_never_auto_promotes():
     result = run_generation_candidate_validation(
         diagnosis,
         provider=Provider(),
+        symbols=("A.T", "B.T", "C.T"),
         as_of=date(2027, 1, 1),
     )
     assert result["automatic_promotion"] is False
