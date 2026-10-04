@@ -102,7 +102,6 @@ def _candidate_for_rule(rule: str, proposed_change: dict):
             edge_multiple=float(proposed_change.get("edge_multiple", 2.0)),
         )
     if rule in {
-        "require_cost_coverage_on_negative_slope",
         "allow_shallow_discount_band_with_tertiary_volume",
         "lower_shallow_discount_floor",
         "lower_tertiary_volume_ratio",
@@ -193,6 +192,7 @@ def run_hypothesis_ab_test(
     )
 
     if rule in {
+        "require_cost_coverage_on_negative_slope",
         "allow_shallow_discount_band_with_tertiary_volume",
         "lower_shallow_discount_floor",
         "lower_tertiary_volume_ratio",
