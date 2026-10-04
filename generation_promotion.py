@@ -4,6 +4,8 @@ import json
 import os
 import urllib.request
 
+from backtest.champion_spec import CURRENT_CHAMPION_SPEC
+
 
 PROMOTION_URL = (
     "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/"
@@ -41,6 +43,16 @@ def promote(token: str) -> dict:
 
 
 def main() -> int:
+    if int(CURRENT_CHAMPION_SPEC["generation"]) >= 6:
+        print(json.dumps({
+            "development_endpoint": "015",
+            "status": "skipped",
+            "reason": "generation_6_already_promoted",
+            "active_champion": CURRENT_CHAMPION_SPEC["strategy_key"],
+            "live_trading": False,
+        }, ensure_ascii=False, indent=2))
+        return 0
+
     token = get_oidc_token()
     result = promote(token)
     print(
