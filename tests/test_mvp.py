@@ -711,3 +711,49 @@ def test_generation_candidate_validation_never_auto_promotes():
     assert len(result["bridge_candidates"]) == 3
     assert len(result["historical_evaluations"]) == 3
     assert result["status"] in {"validated_candidate", "no_validated_candidate"}
+
+
+def test_promotion_decision_requires_dual_gate_and_active_baseline():
+    from backtest.promotion_decision import build_promotion_request
+
+    candidate = {
+        "candidate_key": "mean_reversion_cost_floor:g6-candidate-x4",
+        "status": "validated_candidate",
+        "selected": True,
+        "baseline_strategy_key": "mean_reversion_band_volume:g5",
+        "baseline_generation": 5,
+        "proposed_generation": 6,
+        "historical_evaluation": {"accepted": True},
+        "synthetic_evaluation": {"quality_guard": {"accepted": True}},
+    }
+    active = {
+        "strategy_key": "mean_reversion_band_volume:g5",
+        "generation": 5,
+    }
+    request = build_promotion_request(candidate, active)
+    assert request["candidate_key"] == candidate["candidate_key"]
+    assert request["expected_generation"] == 6
+    assert request["live_trading"] is False
+
+
+def test_promotion_decision_rejects_unselected_candidate():
+    import pytest
+
+    from backtest.promotion_decision import build_promotion_request
+
+    candidate = {
+        "candidate_key": "mean_reversion_cost_floor:g6-candidate-x3",
+        "status": "rejected",
+        "selected": False,
+        "baseline_strategy_key": "mean_reversion_band_volume:g5",
+        "baseline_generation": 5,
+        "proposed_generation": 6,
+        "historical_evaluation": {"accepted": False},
+        "synthetic_evaluation": {"quality_guard": {"accepted": False}},
+    }
+    active = {
+        "strategy_key": "mean_reversion_band_volume:g5",
+        "generation": 5,
+    }
+    with pytest.raises(ValueError):
+        build_promotion_request(candidate, active)
