@@ -8,6 +8,13 @@ from html.parser import HTMLParser
 
 
 JPX_DELISTED_URL = "https://www.jpx.co.jp/english/listing/stocks/delisted/index.html"
+JPX_DELISTED_URLS = (
+    JPX_DELISTED_URL,
+    "https://www.jpx.co.jp/english/listing/stocks/delisted/archives-01.html",
+    "https://www.jpx.co.jp/english/listing/stocks/delisted/archives-02.html",
+    "https://www.jpx.co.jp/english/listing/stocks/delisted/archives-03.html",
+    "https://www.jpx.co.jp/english/listing/stocks/delisted/archives-04.html",
+)
 
 
 @dataclass(frozen=True)
@@ -132,3 +139,45 @@ def fetch_delisted_issues(
         "sha256": hashlib.sha256(raw).hexdigest(),
         "record_count": len(issues),
     }
+
+
+
+def fetch_delisted_issues_history(
+    *,
+    start_date: date,
+    as_of: date,
+    timeout_seconds: int = 20,
+) -> tuple[list[DelistedIssue], list[dict]]:
+    all_rows: list[DelistedIssue] = []
+    sources: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    for url in JPX_DELISTED_URLS:
+        request = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 stock-warashibe point-in-time/0.7",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+        )
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            raw = response.read()
+
+        rows = parse_delisted_html(raw, as_of=as_of)
+        filtered = [
+            row for row in rows
+            if date.fromisoformat(row.delisted_at) >= start_date
+        ]
+        sources.append({
+            "url": url,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "record_count": len(filtered),
+        })
+        for row in filtered:
+            key = (row.code, row.delisted_at)
+            if key not in seen:
+                seen.add(key)
+                all_rows.append(row)
+
+    all_rows.sort(key=lambda row: (row.delisted_at, row.code))
+    return all_rows, sources

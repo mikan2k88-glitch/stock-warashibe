@@ -7,7 +7,9 @@ from datetime import date
 
 from backtest.champion_spec import CURRENT_CHAMPION_SPEC
 from backtest.robustness_runner import run_robustness_validation
-from data.jpx_delisted import fetch_delisted_issues
+from data.jpx_delisted import fetch_delisted_issues_history
+from data.jpx_listed import fetch_current_listed_issues
+from data.jpx_new_listings import fetch_new_listing_history
 from paper.accounting import close_position, open_position
 from paper.candidate_discovery import discover_daily_candidate
 from paper.engine import propose_paper_buy
@@ -15,7 +17,7 @@ from paper.live_readiness import assess_live_readiness
 from paper.notifications import build_approval_request
 from paper.readiness import assess_paper_readiness
 from research.expanded_retest import build_expanded_retest
-from research.point_in_time_universe import build_lifecycle_snapshot
+from research.historical_membership import RECONSTRUCTION_START, reconstruct_historical_membership
 from research.sector_diagnosis import diagnose_sectors
 from research.tail_analysis import analyze_tail_windows
 
@@ -41,8 +43,34 @@ def main() -> int:
     today = date.today()
     robustness = run_robustness_validation(as_of=today)
 
-    delisted, jpx_source = fetch_delisted_issues(as_of=today)
-    lifecycle = build_lifecycle_snapshot(delisted, snapshot_date=today)
+    current_listed, listed_source = fetch_current_listed_issues()
+    snapshot_date = date.fromisoformat(listed_source["snapshot_date"])
+    new_listings, new_listing_sources = fetch_new_listing_history(
+        start_date=RECONSTRUCTION_START,
+        as_of=snapshot_date,
+    )
+    delisted, delisted_sources = fetch_delisted_issues_history(
+        start_date=RECONSTRUCTION_START,
+        as_of=snapshot_date,
+    )
+    source_completeness = (
+        len(new_listing_sources) == 5
+        and len(delisted_sources) == 5
+        and all(source["record_count"] >= 0 for source in new_listing_sources)
+        and all(source["record_count"] >= 0 for source in delisted_sources)
+    )
+    lifecycle = reconstruct_historical_membership(
+        current_listed,
+        new_listings,
+        delisted,
+        snapshot_date=snapshot_date,
+        source_completeness_verified=source_completeness,
+    )
+    jpx_source = {
+        "listed": listed_source,
+        "new_listings": new_listing_sources,
+        "delistings": delisted_sources,
+    }
 
     tail = analyze_tail_windows(robustness)
     sectors = diagnose_sectors(robustness)
@@ -101,6 +129,7 @@ def main() -> int:
             "028": approval,
             "029": accounting_preview,
             "030": live,
+            "031": lifecycle,
         },
         "jpx_source": jpx_source,
         "champion": CURRENT_CHAMPION_SPEC,
@@ -121,7 +150,7 @@ def main() -> int:
         "lifecycle_records": lifecycle["lifecycle_records"],
         "summary": {
             "endpoint_from": 21,
-            "endpoint_to": 30,
+            "endpoint_to": 31,
             "point_in_time_verified": lifecycle["point_in_time"]["verified"],
             "delisted_records_loaded": lifecycle["delisted_record_count"],
             "robustness_gate_score": retest["robustness_gate_score"],

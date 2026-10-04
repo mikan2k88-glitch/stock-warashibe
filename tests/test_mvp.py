@@ -1010,3 +1010,54 @@ def test_live_readiness_never_enables_live_trading_automatically():
     assert result["research_ready_for_human_gate"] is True
     assert result["human_gate_required"] is True
     assert result["live_trading_allowed"] is False
+
+
+def test_listed_workbook_parser_filters_domestic_prime_standard_growth():
+    import io
+    from datetime import date
+
+    from openpyxl import Workbook
+
+    from data.jpx_listed import parse_listed_workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Date", "Code", "Issue Name", "Market/Products"])
+    ws.append(["2026-08-31", 9432, "NTT", "Prime Market (Domestic Stocks)"])
+    ws.append(["2026-08-31", 1305, "ETF", "ETFs"])
+    ws.append(["2026-08-31", 9999, "Foreign", "Standard Market (Foreign Stocks)"])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    rows = parse_listed_workbook(buf.getvalue(), snapshot_date=date(2026, 8, 31))
+    assert [row.code for row in rows] == ["9432"]
+
+
+def test_historical_membership_reconstruction_can_verify_complete_public_events():
+    from datetime import date
+
+    from data.jpx_delisted import DelistedIssue
+    from data.jpx_listed import ListedIssue
+    from data.jpx_new_listings import NewListingIssue
+    from research.historical_membership import reconstruct_historical_membership
+
+    current = [
+        ListedIssue(str(1000 + i), f"Current {i}", "Prime Market (Domestic Stocks)", "2026-08-31")
+        for i in range(1000)
+    ]
+    new = [
+        NewListingIssue("2022-02-01", "New Co", "2001", "Growth", "test"),
+    ]
+    delisted = [
+        DelistedIssue("2023-03-01", "Old Co", "3001", "Standard", "test"),
+    ]
+    result = reconstruct_historical_membership(
+        current,
+        new,
+        delisted,
+        snapshot_date=date(2026, 8, 31),
+        source_completeness_verified=True,
+    )
+    assert result["historical_membership_snapshot_count"] >= 48
+    assert result["point_in_time"]["verified"] is True
+    assert result["status"] == "verified_public_reconstruction"
