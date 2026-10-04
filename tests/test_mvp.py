@@ -1143,3 +1143,73 @@ def test_shadow_outcome_evaluator_uses_next_open_and_fifth_future_close():
     assert result["counterfactual_only"] is False
     assert result["paper_order_created"] is False
     assert result["live_trading"] is False
+
+
+def test_shadow_readiness_collects_until_30_days_and_20_buys():
+    from research.shadow_readiness import aggregate_shadow_readiness
+
+    observations = [
+        {
+            "observation_date": "2026-10-02",
+            "signal": "buy",
+            "status": "pending",
+            "outcome": {},
+        }
+    ]
+    result = aggregate_shadow_readiness(observations)
+    assert result["endpoint"] == "034"
+    assert result["status"] == "collecting"
+    assert result["observation_days"] == 1
+    assert result["evaluated_buy_signals"] == 0
+    assert result["sufficient_evidence"] is False
+
+
+def test_prospective_acceptance_passes_only_predeclared_forward_thresholds():
+    from research.prospective_acceptance import assess_prospective_acceptance
+
+    readiness = {
+        "sufficient_evidence": True,
+        "metrics": {
+            "win_rate": 0.55,
+            "mean_return_on_starting_capital": 0.01,
+            "cumulative_net_pnl": 1000.0,
+            "worst_return_on_starting_capital": -0.02,
+            "max_drawdown_proxy_ratio": -0.05,
+        },
+    }
+    result = assess_prospective_acceptance(readiness)
+    assert result["endpoint"] == "035"
+    assert result["accepted"] is True
+    assert result["decision"] == "prospective_g6_accepted"
+    assert result["paper_trading_allowed"] is False
+
+
+def test_shadow_failure_does_not_call_insufficient_sample_a_strategy_failure():
+    from research.shadow_failure_diagnosis import diagnose_shadow_failure
+
+    readiness = {"sufficient_evidence": False}
+    acceptance = {"accepted": False, "status": "collecting"}
+    result = diagnose_shadow_failure(readiness, acceptance)
+    assert result["endpoint"] == "036"
+    assert result["classification"] == "collect_more_forward_evidence"
+    assert result["g7_generation_allowed"] is False
+    assert result["automatic_strategy_change"] is False
+
+
+def test_paper_reopen_gate_requires_forward_acceptance_and_keeps_live_disabled():
+    from paper.reopen_gate import assess_paper_reopen_gate
+
+    readiness = {"sufficient_evidence": True}
+    acceptance = {"accepted": True}
+    result = assess_paper_reopen_gate(
+        readiness,
+        acceptance,
+        point_in_time_verified=True,
+        data_fresh=True,
+        active_strategy_key="mean_reversion_cost_floor:g6",
+    )
+    assert result["endpoint"] == "037"
+    assert result["status"] == "reopened"
+    assert result["paper_trading_allowed"] is True
+    assert result["live_trading_allowed"] is False
+    assert result["human_gate_required"] is True
