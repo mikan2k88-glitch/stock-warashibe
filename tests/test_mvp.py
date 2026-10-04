@@ -1213,3 +1213,169 @@ def test_paper_reopen_gate_requires_forward_acceptance_and_keeps_live_disabled()
     assert result["paper_trading_allowed"] is True
     assert result["live_trading_allowed"] is False
     assert result["human_gate_required"] is True
+
+
+def test_paper_session_start_stays_blocked_until_endpoint_037_reopens():
+    from paper.session import build_paper_session_start
+
+    result = build_paper_session_start(
+        {"paper_trading_allowed": False, "decision": "waiting"},
+        existing_sessions=[],
+        run_id="1",
+        strategy_key="mean_reversion_cost_floor:g6",
+    )
+    assert result["endpoint"] == "038"
+    assert result["status"] == "blocked"
+    assert result["session"] is None
+    assert result["live_trading"] is False
+
+
+def test_paper_session_start_is_idempotent_when_reopened():
+    from paper.session import build_paper_session_start
+
+    existing = {
+        "session_key": "paper-live-sim-old",
+        "strategy_key": "mean_reversion_cost_floor:g6",
+        "starting_capital": 30000,
+        "current_capital": 30000,
+        "status": "active",
+        "readiness": {},
+        "ledger": {},
+        "live_trading": False,
+    }
+    result = build_paper_session_start(
+        {"paper_trading_allowed": True},
+        existing_sessions=[existing],
+        run_id="2",
+        strategy_key="mean_reversion_cost_floor:g6",
+    )
+    assert result["status"] == "idempotent_existing_session"
+    assert result["session"]["session_key"] == existing["session_key"]
+
+
+def test_paper_lifecycle_proposes_only_paper_order_when_session_active():
+    from paper.lifecycle import plan_or_advance_paper_lifecycle
+
+    session_result = {
+        "session": {
+            "session_key": "paper-test",
+            "current_capital": 30000,
+            "status": "active",
+        }
+    }
+    observations = [{
+        "observation_date": "2026-10-02",
+        "symbol": "9432.T",
+        "signal": "buy",
+        "score": 0.1,
+        "reference_close": 150.0,
+        "lot_cost": 15000.0,
+        "shares": 100,
+        "reason": "test",
+    }]
+    result = plan_or_advance_paper_lifecycle(
+        session_result,
+        existing_orders=[],
+        observations=observations,
+    )
+    assert result["endpoint"] == "039"
+    assert result["status"] == "proposed"
+    assert result["order"]["approval_required"] is False
+    assert result["order"]["live_order"] is False
+    assert result["paper_only"] is True
+
+
+def test_paper_performance_requires_20_trades_and_30_days():
+    from datetime import date
+
+    from paper.performance import build_paper_performance
+
+    session_result = {
+        "session": {
+            "session_key": "paper-test",
+            "strategy_key": "mean_reversion_cost_floor:g6",
+            "starting_capital": 30000,
+            "created_at": "2026-09-01T00:00:00Z",
+        }
+    }
+    orders = [
+        {
+            "session_key": "paper-test",
+            "status": "closed",
+            "net_pnl": 10.0,
+            "capital_after": 30000 + (index + 1) * 10,
+            "closed_at": f"2026-09-{(index % 20) + 1:02d}T00:00:00Z",
+        }
+        for index in range(20)
+    ]
+    result = build_paper_performance(
+        session_result,
+        orders=orders,
+        as_of=date(2026, 10, 4),
+    )
+    assert result["endpoint"] == "040"
+    assert result["status"] == "qualified"
+    assert result["closed_trades"] == 20
+    assert result["paper_days"] >= 30
+
+
+def test_live_readiness_recheck_only_prepares_human_gate():
+    from paper.live_readiness_recheck import assess_live_readiness_recheck
+
+    result = assess_live_readiness_recheck(
+        {"paper_trading_allowed": True},
+        {"status": "qualified", "closed_trades": 20, "paper_days": 30},
+    )
+    assert result["endpoint"] == "041"
+    assert result["status"] == "ready_for_human_gate"
+    assert result["research_ready_for_human_gate"] is True
+    assert result["live_trading_allowed"] is False
+    assert result["broker_connected"] is False
+
+
+def test_human_gate_package_never_auto_approves():
+    from paper.human_gate_package import build_human_gate_package
+
+    package = build_human_gate_package(
+        {"status": "ready_for_human_gate", "research_ready_for_human_gate": True, "checks": {}},
+        package_key="human-gate-test",
+    )
+    assert package["endpoint"] == "042"
+    assert package["status"] == "ready_for_review"
+    assert package["explicit_human_approval"] is False
+    assert package["live_trading_allowed"] is False
+    assert package["safeguards"]["approval_code_required"] == "8888"
+
+
+def test_real_trial_adapter_never_sends_live_order():
+    from broker.human_gated_adapter import HumanGatedRealTrialAdapter
+
+    package = {
+        "package_key": "human-gate-test",
+        "strategy_key": "mean_reversion_cost_floor:g6",
+        "status": "ready_for_review",
+        "limits": {
+            "maximum_initial_capital_yen": 30000,
+            "shares_per_order": 100,
+        },
+    }
+    adapter = HumanGatedRealTrialAdapter()
+    blocked = adapter.prepare(
+        package,
+        explicit_human_approval=False,
+        broker_connected=False,
+    )
+    assert blocked["endpoint"] == "043"
+    assert blocked["status"] == "blocked"
+    assert blocked["live_order_sent"] is False
+    assert blocked["trial_payload"]["network_order_transmission_implemented"] is False
+
+    manual = adapter.prepare(
+        package,
+        symbol="9432.T",
+        explicit_human_approval=True,
+        broker_connected=True,
+    )
+    assert manual["status"] == "ready_for_manual_execution"
+    assert manual["live_order_sent"] is False
+    assert manual["live_trading_allowed"] is False
