@@ -45,13 +45,19 @@ def run_generation_candidate_validation(
     diagnosis_result: dict,
     *,
     provider=None,
+    symbols=None,
     as_of=None,
 ) -> dict:
     bridge = build_diagnosis_bridge(diagnosis_result)
+    historical_kwargs = {
+        "provider": provider,
+        "as_of": as_of,
+    }
+    if symbols is not None:
+        historical_kwargs["symbols"] = symbols
     historical = evaluate_historical_candidates(
         bridge,
-        provider=provider,
-        as_of=as_of,
+        **historical_kwargs,
     )
     historical_by_key = {row["queue_key"]: row for row in historical}
 
