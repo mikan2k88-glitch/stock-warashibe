@@ -18,6 +18,7 @@ create table if not exists public.stock_warashibe_shadow_observations (
   status text not null default 'pending'
     check (status in ('pending','evaluated','skipped')),
   outcome jsonb not null default '{}'::jsonb,
+  evaluated_at timestamptz,
   live_trading boolean not null default false check (live_trading = false),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

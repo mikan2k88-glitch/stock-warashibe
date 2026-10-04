@@ -1095,3 +1095,51 @@ def test_shadow_validation_records_research_only_observations():
     assert result["live_trading"] is False
     assert result["observations"][0]["observation_key"] == "g6-shadow:9432.T:2026-10-02"
     assert result["observations"][0]["shares"] == 100
+
+
+def test_shadow_outcome_evaluator_waits_for_five_future_bars():
+    from types import SimpleNamespace
+
+    from data.stock_data_adapter import Bar
+    from research.shadow_outcome import evaluate_shadow_observation
+
+    bars = [
+        Bar(date=f"2026-10-0{day}", open=100.0, high=101.0, low=99.0, close=100.0, volume=100000)
+        for day in range(1, 6)
+    ]
+    batch = SimpleNamespace(bars=bars, source_sha256="b" * 64)
+    observation = {
+        "observation_date": "2026-10-01",
+        "signal": "buy",
+        "shares": 100,
+    }
+    result = evaluate_shadow_observation(observation, batch)
+    assert result["ready"] is False
+    assert result["reason"] == "insufficient_future_bars"
+    assert result["available_future_bars"] == 4
+
+
+def test_shadow_outcome_evaluator_uses_next_open_and_fifth_future_close():
+    from types import SimpleNamespace
+
+    from data.stock_data_adapter import Bar
+    from research.shadow_outcome import evaluate_shadow_observation
+
+    bars = [
+        Bar(date=f"2026-10-0{day}", open=100.0 + day, high=103.0 + day, low=99.0, close=101.0 + day, volume=100000)
+        for day in range(1, 7)
+    ]
+    batch = SimpleNamespace(bars=bars, source_sha256="c" * 64)
+    observation = {
+        "observation_date": "2026-10-01",
+        "signal": "buy",
+        "shares": 100,
+    }
+    result = evaluate_shadow_observation(observation, batch)
+    assert result["ready"] is True
+    assert result["entry_date"] == "2026-10-02"
+    assert result["exit_date"] == "2026-10-06"
+    assert result["horizon_trading_days"] == 5
+    assert result["counterfactual_only"] is False
+    assert result["paper_order_created"] is False
+    assert result["live_trading"] is False

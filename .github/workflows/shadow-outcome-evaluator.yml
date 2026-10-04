@@ -1,0 +1,28 @@
+name: G6 Shadow Outcome Evaluator
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 * * 1-5"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  shadow-outcome-evaluator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run full tests
+        run: python -m pytest -q
+      - name: Evaluate matured forward-only observations
+        run: python shadow_outcome_evaluator.py
