@@ -11,6 +11,7 @@ _META_KEYS = {
     "live_trading",
     "phase",
     "derived_from_rejected_rule",
+    "candidate_strategy_name",
 }
 
 

@@ -9,6 +9,7 @@ from strategies.mean_reversion_adaptive_confirmation import (
     MeanReversionAdaptiveConfirmationStrategy,
 )
 from strategies.mean_reversion_band_volume import MeanReversionBandVolumeStrategy
+from strategies.mean_reversion_cost_floor import MeanReversionCostFloorStrategy
 from strategies.mean_reversion_secondary_volume import (
     MeanReversionSecondaryVolumeStrategy,
 )
@@ -77,7 +78,31 @@ def _candidate_for_rule(rule: str, proposed_change: dict):
                 proposed_change.get("deep_discount_threshold", 0.035)
             ),
         )
+    if rule == "require_cost_coverage_on_negative_slope":
+        return MeanReversionCostFloorStrategy(
+            minimum_volume_ratio=float(proposed_change.get("minimum_volume_ratio", 1.20)),
+            deep_discount_threshold=float(
+                proposed_change.get("deep_discount_threshold", 0.04)
+            ),
+            moderate_discount_threshold=float(
+                proposed_change.get("moderate_discount_threshold", 0.03)
+            ),
+            secondary_volume_ratio=float(
+                proposed_change.get("secondary_volume_ratio", 1.09)
+            ),
+            shallow_discount_threshold=float(
+                proposed_change.get("shallow_discount_threshold", 0.025)
+            ),
+            shallow_discount_ceiling=float(
+                proposed_change.get("shallow_discount_ceiling", 0.035)
+            ),
+            tertiary_volume_ratio=float(
+                proposed_change.get("tertiary_volume_ratio", 1.08)
+            ),
+            edge_multiple=float(proposed_change.get("edge_multiple", 2.0)),
+        )
     if rule in {
+        "require_cost_coverage_on_negative_slope",
         "allow_shallow_discount_band_with_tertiary_volume",
         "lower_shallow_discount_floor",
         "lower_tertiary_volume_ratio",
@@ -147,7 +172,9 @@ def run_hypothesis_ab_test(
     ]
     preservation = {name: preserved(name) for name in core_preserved}
 
-    if rule == "allow_shallow_discount_band_with_tertiary_volume":
+    if rule == "require_cost_coverage_on_negative_slope":
+        target = "cost_churn"
+    elif rule == "allow_shallow_discount_band_with_tertiary_volume":
         target = "shallow_reversal"
     elif rule == "lower_shallow_discount_floor":
         target = "micro_reversal"

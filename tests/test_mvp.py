@@ -58,6 +58,7 @@ def test_synthetic_scenario_suite():
         "shallow_reversal",
         "micro_reversal",
         "thin_volume_reversal",
+        "cost_churn",
         "sideways",
     ]
 
@@ -606,3 +607,106 @@ def test_strategy_diagnosis_keeps_g5_frozen_and_produces_research_input():
         "trend", "volatility", "volume"
     }
     assert len(result["strategies"]) == 2
+
+
+def test_cost_floor_candidate_improves_cost_churn_and_preserves_core():
+    from backtest.hypothesis_runner import run_hypothesis_ab_test
+
+    proposed = {
+        **generation_five_baseline()["config"],
+        "rule": "require_cost_coverage_on_negative_slope",
+        "candidate_strategy_name": "mean_reversion_cost_floor",
+        "baseline_strategy_key": "mean_reversion_band_volume:g5",
+        "baseline_generation": 5,
+        "edge_multiple": 2.0,
+        "live_trading": False,
+    }
+    result = run_hypothesis_ab_test(
+        proposed,
+        baseline_spec=generation_five_baseline(),
+    )
+    assert result["observed"]["cost_churn_improved"] is True
+    assert result["quality_guard"]["accepted"] is True
+    assert result["verdict"] == "validated"
+
+
+def test_diagnosis_bridge_predeclares_three_cost_multiples():
+    from research.hypothesis_bridge import build_diagnosis_bridge
+
+    diagnosis = {
+        "mode": "historical_strategy_diagnosis",
+        "summary": {"diagnosed_window_count": 30},
+        "diagnosis": {
+            "champion_frozen": "mean_reversion_band_volume:g5",
+            "parameter_tuning": False,
+            "research_input": {
+                "automatic_strategy_change": False,
+                "loss_window_count": 20,
+                "high_frequency_loss_count": 7,
+                "mean_cost_drag_ratio": 0.02466,
+                "primary_hypothesis": (
+                    "investigate_turnover_and_entry_quality_before_new_generation"
+                ),
+            },
+        },
+    }
+    items = build_diagnosis_bridge(diagnosis)
+    assert [item["proposed_change"]["edge_multiple"] for item in items] == [
+        2.0, 3.0, 4.0
+    ]
+    assert all(item["baseline_generation"] == 5 for item in items)
+    assert all(item["proposed_change"]["live_trading"] is False for item in items)
+
+
+def test_generation_candidate_validation_never_auto_promotes():
+    from datetime import date
+
+    from backtest.generation_candidate_validator import (
+        run_generation_candidate_validation,
+    )
+
+    closes = []
+    for block in range(9):
+        base = 150 + block * 2
+        closes.extend([
+            base + 4, base + 2, base, base + 1, base + 3,
+            base + 1, base - 1, base + 1, base + 3, base,
+        ])
+    closes = (closes * 4)[:360]
+    batches = {
+        "A.T": _fake_market_batch("A.T", closes),
+        "B.T": _fake_market_batch("B.T", [x + 20 for x in closes]),
+        "C.T": _fake_market_batch("C.T", [x - 20 for x in closes]),
+    }
+
+    class Provider:
+        def load_batch(self, symbol, as_of=None):
+            return batches[symbol]
+
+    diagnosis = {
+        "mode": "historical_strategy_diagnosis",
+        "summary": {"diagnosed_window_count": 12},
+        "diagnosis": {
+            "champion_frozen": "mean_reversion_band_volume:g5",
+            "parameter_tuning": False,
+            "research_input": {
+                "automatic_strategy_change": False,
+                "loss_window_count": 8,
+                "high_frequency_loss_count": 3,
+                "mean_cost_drag_ratio": 0.02,
+                "primary_hypothesis": (
+                    "investigate_turnover_and_entry_quality_before_new_generation"
+                ),
+            },
+        },
+    }
+    result = run_generation_candidate_validation(
+        diagnosis,
+        provider=Provider(),
+        as_of=date(2027, 1, 1),
+    )
+    assert result["automatic_promotion"] is False
+    assert result["proposed_generation"] == 6
+    assert len(result["bridge_candidates"]) == 3
+    assert len(result["historical_evaluations"]) == 3
+    assert result["status"] in {"validated_candidate", "no_validated_candidate"}
