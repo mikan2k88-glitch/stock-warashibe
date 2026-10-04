@@ -1557,3 +1557,72 @@ def test_transition_controller_can_start_paper_but_never_live():
     assert result["session"]["live_trading"] is False
     assert result["live_trading_allowed"] is False
     assert result["broker_connected"] is False
+
+
+def test_operational_burnin_collects_before_five_observation_days():
+    from datetime import date
+    from operations.burnin import evaluate_operational_burnin
+
+    context = {
+        "observations": [{"observation_date": "2026-10-02"}],
+        "runtime_history": [{"created_at": "2026-10-02T17:20:00Z", "status": "collecting"}],
+        "integrity_history": [{"created_at": "2026-10-02T17:20:00Z", "status": "collecting"}],
+    }
+    result = evaluate_operational_burnin(context, as_of=date(2026, 10, 5), run_id="test")
+    assert result["endpoint"] == "048"
+    assert result["status"] == "collecting"
+    assert result["observed_business_days"] == 1
+    assert result["live_trading"] is False
+
+
+def test_operational_burnin_passes_five_clean_observation_days():
+    from datetime import date
+    from operations.burnin import evaluate_operational_burnin
+
+    dates = ["2026-10-01","2026-10-02","2026-10-05","2026-10-06","2026-10-07"]
+    context = {
+        "observations": [{"observation_date": value} for value in dates],
+        "runtime_history": [{"created_at": value + "T17:20:00Z", "status": "collecting"} for value in dates],
+        "integrity_history": [{"created_at": value + "T17:20:00Z", "status": "collecting"} for value in dates],
+    }
+    result = evaluate_operational_burnin(context, as_of=date(2026, 10, 7), run_id="test")
+    assert result["status"] == "passed"
+    assert all(result["checks"].values())
+
+
+def test_recovery_controller_retries_only_transient_non_live_categories():
+    from operations.recovery_controller import build_recovery_plan
+
+    alerts = [{"status": "open", "severity": "warning", "category": "data_freshness"}]
+    result = build_recovery_plan(alerts, {"status": "collecting"}, {"status": "collecting"}, run_id="test")
+    assert result["endpoint"] == "049"
+    assert result["status"] == "retrying"
+    assert result["safe_actions"][0]["maximum_attempts"] == 3
+    assert result["retry_policy"]["never_retry_live_order"] is True
+    assert result["live_trading_allowed"] is False
+
+
+def test_recovery_controller_blocks_live_safety_failure():
+    from operations.recovery_controller import build_recovery_plan
+
+    alerts = [{"status": "open", "severity": "critical", "category": "live_safety"}]
+    result = build_recovery_plan(alerts, {"status": "collecting"}, {"status": "degraded"}, run_id="test")
+    assert result["status"] == "blocked"
+    assert result["safe_actions"] == []
+    assert result["broker_connected"] is False
+
+
+def test_runtime_status_route_fails_closed_when_dashboard_unavailable(monkeypatch):
+    import app as app_module
+
+    def fail():
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(app_module, "fetch_runtime_dashboard", fail)
+    client = app_module.app.test_client()
+    response = client.get("/status/runtime")
+    assert response.status_code == 503
+    payload = response.get_json()
+    assert payload["endpoint"] == "050"
+    assert payload["live_trading_allowed"] is False
+    assert payload["broker_connected"] is False

@@ -6,7 +6,9 @@ import urllib.request
 from datetime import date
 
 from operations.alert_engine import build_runtime_alerts
+from operations.burnin import evaluate_operational_burnin
 from operations.evidence_integrity import audit_evidence_integrity
+from operations.recovery_controller import build_recovery_plan
 from operations.status_monitor import build_runtime_status
 from operations.transition_controller import run_transition_controller
 
@@ -65,6 +67,17 @@ def main() -> int:
         as_of=today,
         run_id=run_id,
     )
+    burnin = evaluate_operational_burnin(
+        context,
+        as_of=today,
+        run_id=run_id,
+    )
+    recovery = build_recovery_plan(
+        alerts,
+        burnin,
+        runtime_status,
+        run_id=run_id,
+    )
     transition = run_transition_controller(
         context,
         integrity,
@@ -85,6 +98,8 @@ def main() -> int:
             "alerts": alerts,
             "integrity_audit": integrity,
             "transition": transition,
+            "burnin": burnin,
+            "recovery": recovery,
             "session": transition.get("session"),
         },
     )
@@ -103,6 +118,8 @@ def main() -> int:
             },
             "046": integrity,
             "047": transition,
+            "048": burnin,
+            "049": recovery,
         },
         "stored": stored,
     }, ensure_ascii=False, indent=2))

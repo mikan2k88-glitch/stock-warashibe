@@ -25,4 +25,4 @@ jobs:
       - name: Run full tests
         run: python -m pytest -q
       - name: Run endpoints 038 through 043
-        run: python paper_runtime_pipeline.py
+        run: python scripts/retry_command.py --attempts 3 --delay-seconds 20 -- python paper_runtime_pipeline.py

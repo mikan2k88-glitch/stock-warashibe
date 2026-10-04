@@ -12,7 +12,7 @@ permissions:
   id-token: write
 
 jobs:
-  endpoints-044-047:
+  endpoints-044-049:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -24,5 +24,5 @@ jobs:
         run: pip install -r requirements.txt
       - name: Run full tests
         run: python -m pytest -q
-      - name: Run endpoints 044 through 047
-        run: python runtime_operations.py
+      - name: Run endpoints 044 through 049
+        run: python scripts/retry_command.py --attempts 3 --delay-seconds 20 -- python runtime_operations.py
