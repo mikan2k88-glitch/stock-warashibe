@@ -11,6 +11,7 @@ from config import (
 from data.providers import CsvDailyBarProvider
 from simulation.realistic_execution import simulate_guarded_next_bar_trade
 from strategies.registry import build_strategy
+from backtest.champion_spec import CURRENT_CHAMPION_SPEC
 
 
 SYNTHETIC_CHAMPION_SPEC = {
@@ -39,7 +40,7 @@ def run_real_data_readiness_gate(
     csv_path: str | Path | None = None,
     champion_spec: dict | None = None,
 ) -> dict:
-    spec = champion_spec or SYNTHETIC_CHAMPION_SPEC
+    spec = champion_spec or CURRENT_CHAMPION_SPEC
     provider = CsvDailyBarProvider(csv_path or default_fixture_path())
     bars = provider.load("FIXTURE")
     strategy = build_strategy(spec)
@@ -56,8 +57,9 @@ def run_real_data_readiness_gate(
         "minimum_history": len(bars) >= 5,
         "chronological_unique_ohlcv": True,
         "synthetic_champion_frozen": (
-            spec.get("strategy_key") == "mean_reversion_band_volume:g5"
-            and int(spec.get("generation", 0)) == 5
+            spec.get("strategy_key") == CURRENT_CHAMPION_SPEC["strategy_key"]
+            and int(spec.get("generation", 0))
+            == int(CURRENT_CHAMPION_SPEC["generation"])
         ),
         "guarded_trade_produced": trade is not None,
         "decision_uses_history_only": (

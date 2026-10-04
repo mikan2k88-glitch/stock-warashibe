@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from statistics import mean
 
 from backtest.historical_runner import IN_SAMPLE_RATIO, run_historical_market_backtest
-from backtest.readiness_gate import SYNTHETIC_CHAMPION_SPEC
+from backtest.champion_spec import CURRENT_CHAMPION_SPEC
 from config import DEFAULT_LOT_SIZE, DEFAULT_SLIPPAGE_RATE, STARTING_CAPITAL
 from data.yahoo_chart_provider import YahooChartDailyBarProvider
 
@@ -62,7 +62,7 @@ def run_multi_stock_validation(
 ) -> dict:
     current_date = as_of or date.today()
     data_provider = provider or YahooChartDailyBarProvider()
-    spec = champion_spec or SYNTHETIC_CHAMPION_SPEC
+    spec = champion_spec or CURRENT_CHAMPION_SPEC
 
     eligible = []
     excluded = []

@@ -6,7 +6,7 @@ from statistics import mean, pstdev
 
 from backtest.historical_runner import _buy_hold_benchmark, _strategy_walk_forward
 from backtest.multi_stock_runner import FIXED_UNIVERSE, STALE_AFTER_DAYS
-from backtest.readiness_gate import SYNTHETIC_CHAMPION_SPEC
+from backtest.champion_spec import CURRENT_CHAMPION_SPEC
 from backtest.walk_forward_runner import (
     HISTORY_BARS,
     MIN_ELIGIBLE_SYMBOLS,
@@ -165,7 +165,7 @@ def _research_input(rows: list[dict], groups: dict) -> dict:
     elif weak_regimes:
         primary_hypothesis = "investigate_regime_guard_before_new_generation"
     else:
-        primary_hypothesis = "insufficient_common_failure_pattern_keep_g5_and_collect_more_data"
+        primary_hypothesis = "insufficient_common_failure_pattern_keep_current_champion_and_collect_more_data"
 
     return {
         "automatic_strategy_change": False,
@@ -176,7 +176,7 @@ def _research_input(rows: list[dict], groups: dict) -> dict:
         "weak_regimes": weak_regimes,
         "next_step": (
             "Use these diagnostics as Research Queue input. "
-            "Do not tune G5 in place; any change must be a new hypothesis/generation."
+            "Do not tune the active champion in place; any change must be a new hypothesis/generation."
         ),
     }
 
@@ -190,7 +190,7 @@ def run_strategy_diagnosis(
 ) -> dict:
     current_date = as_of or date.today()
     data_provider = provider or YahooChartDailyBarProvider()
-    spec = champion_spec or SYNTHETIC_CHAMPION_SPEC
+    spec = champion_spec or CURRENT_CHAMPION_SPEC
 
     rows = []
     excluded = []

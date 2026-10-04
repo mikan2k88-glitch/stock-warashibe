@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import date
 
-from backtest.readiness_gate import SYNTHETIC_CHAMPION_SPEC
+from backtest.champion_spec import CURRENT_CHAMPION_SPEC
 from config import (
     DEFAULT_FEE_RATE,
     DEFAULT_LOT_SIZE,
@@ -139,7 +139,7 @@ def run_historical_market_backtest(
     champion_spec: dict | None = None,
     as_of: date | None = None,
 ) -> dict:
-    spec = champion_spec or SYNTHETIC_CHAMPION_SPEC
+    spec = champion_spec or CURRENT_CHAMPION_SPEC
     market_batch = batch or RemoteCsvDailyBarProvider().load_batch(
         DEFAULT_SYMBOL,
         as_of=as_of or date.today(),

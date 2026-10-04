@@ -4,6 +4,7 @@ import json
 import os
 import urllib.request
 
+from backtest.champion_spec import CURRENT_CHAMPION_SPEC
 from backtest.generation_candidate_validator import (
     run_generation_candidate_validation,
 )
@@ -42,6 +43,19 @@ def post_json(token: str, payload: dict) -> dict:
 
 
 def main() -> int:
+    if int(CURRENT_CHAMPION_SPEC["generation"]) >= 6:
+        print(json.dumps({
+            "development_endpoints": {
+                "012": "archived",
+                "013": "archived",
+                "014": "archived",
+            },
+            "status": "skipped",
+            "reason": "generation_6_already_promoted",
+            "active_champion": CURRENT_CHAMPION_SPEC["strategy_key"],
+        }, ensure_ascii=False, indent=2))
+        return 0
+
     diagnosis = run_strategy_diagnosis()
     validation = run_generation_candidate_validation(diagnosis)
     token = get_oidc_token()

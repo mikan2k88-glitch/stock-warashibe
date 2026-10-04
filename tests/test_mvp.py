@@ -299,7 +299,7 @@ def test_historical_runner_keeps_champion_frozen_and_oos_only():
 
     result = run_historical_market_backtest(batch=batch)
     assert result["live_trading"] is False
-    assert result["summary"]["champion_strategy"] == "mean_reversion_band_volume:g5"
+    assert result["summary"]["champion_strategy"] == "mean_reversion_cost_floor:g6"
     assert result["split"]["in_sample_used_for_tuning"] is False
     assert result["split"]["out_of_sample_start"] > result["split"]["in_sample_end"]
     assert result["price_policy"]["lot_size"] == 100
@@ -537,7 +537,7 @@ def test_walk_forward_validation_reports_stability_without_tuning():
 
     assert result["live_trading"] is False
     assert result["walk_forward"]["parameter_tuning"] is False
-    assert result["walk_forward"]["champion_frozen"] == "mean_reversion_band_volume:g5"
+    assert result["walk_forward"]["champion_frozen"] == "mean_reversion_cost_floor:g6"
     assert result["summary"]["eligible_symbol_count"] == 3
     assert result["summary"]["evaluated_window_count"] >= 9
     assert 0 <= result["summary"]["positive_window_ratio"] <= 1
@@ -599,7 +599,7 @@ def test_strategy_diagnosis_keeps_g5_frozen_and_produces_research_input():
 
     assert result["live_trading"] is False
     assert result["diagnosis"]["parameter_tuning"] is False
-    assert result["diagnosis"]["champion_frozen"] == "mean_reversion_band_volume:g5"
+    assert result["diagnosis"]["champion_frozen"] == "mean_reversion_cost_floor:g6"
     assert result["diagnosis"]["window_count"] >= 9
     assert result["diagnosis"]["research_input"]["automatic_strategy_change"] is False
     assert "primary_hypothesis" in result["diagnosis"]["research_input"]
@@ -757,3 +757,22 @@ def test_promotion_decision_rejects_unselected_candidate():
     }
     with pytest.raises(ValueError):
         build_promotion_request(candidate, active)
+
+
+def test_current_champion_is_promoted_generation_six():
+    from backtest.champion_spec import CURRENT_CHAMPION_SPEC
+
+    assert CURRENT_CHAMPION_SPEC["strategy_key"] == "mean_reversion_cost_floor:g6"
+    assert CURRENT_CHAMPION_SPEC["generation"] == 6
+    assert CURRENT_CHAMPION_SPEC["config"]["edge_multiple"] == 4.0
+
+
+def test_g6_post_promotion_synthetic_regression_passes():
+    from backtest.champion_regression import run_champion_synthetic_regression
+
+    result = run_champion_synthetic_regression()
+    assert result["status"] == "passed"
+    assert result["checks"]["generation_is_six"] is True
+    assert result["checks"]["core_scenarios_preserved"] is True
+    assert result["checks"]["cost_churn_improved"] is True
+    assert result["live_trading"] is False

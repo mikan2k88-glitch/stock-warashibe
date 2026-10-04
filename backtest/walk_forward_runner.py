@@ -6,7 +6,7 @@ from statistics import mean, median, pstdev
 
 from backtest.historical_runner import _buy_hold_benchmark, _strategy_walk_forward
 from backtest.multi_stock_runner import FIXED_UNIVERSE, STALE_AFTER_DAYS
-from backtest.readiness_gate import SYNTHETIC_CHAMPION_SPEC
+from backtest.champion_spec import CURRENT_CHAMPION_SPEC
 from config import DEFAULT_LOT_SIZE, DEFAULT_SLIPPAGE_RATE, STARTING_CAPITAL
 from data.remote_market_data import MarketDataBatch
 from data.yahoo_chart_provider import YahooChartDailyBarProvider
@@ -59,7 +59,7 @@ def run_walk_forward_validation(
 ) -> dict:
     current_date = as_of or date.today()
     data_provider = provider or YahooChartDailyBarProvider()
-    spec = champion_spec or SYNTHETIC_CHAMPION_SPEC
+    spec = champion_spec or CURRENT_CHAMPION_SPEC
 
     symbol_rows = []
     excluded = []

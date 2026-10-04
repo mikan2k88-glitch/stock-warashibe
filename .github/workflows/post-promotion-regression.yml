@@ -1,0 +1,26 @@
+name: G6 Post-Promotion Regression
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  g6-baseline-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run full tests
+        run: python -m pytest -q
+      - name: Run G6 post-promotion regression
+        run: python post_promotion_regression.py
