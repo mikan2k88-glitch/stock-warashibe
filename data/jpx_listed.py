@@ -127,6 +127,46 @@ def _find_header(ws) -> tuple[int, dict[str, int]]:
     raise ValueError(f"header not found in sheet {ws.title!r}")
 
 
+def _infer_columns(ws) -> tuple[int, dict[str, int]]:
+    code_pattern = re.compile(r"^(?:[0-9]{4}|[0-9]{3}[A-Z])$")
+    row_limit = min(ws.max_row, 800)
+    col_limit = min(ws.max_column, 20)
+    code_scores = {col: 0 for col in range(1, col_limit + 1)}
+    market_scores = {col: 0 for col in range(1, col_limit + 1)}
+    text_scores = {col: 0 for col in range(1, col_limit + 1)}
+
+    for row in range(1, row_limit + 1):
+        for col in range(1, col_limit + 1):
+            value = ws.cell(row, col).value
+            if value is None:
+                continue
+            text = _normalize_code(value)
+            lower = text.lower()
+            if code_pattern.match(text):
+                code_scores[col] += 1
+            if any(label in lower for label in ("prime", "standard", "growth")):
+                market_scores[col] += 1
+            if isinstance(value, str) and len(value.strip()) >= 2:
+                text_scores[col] += 1
+
+    code_col = max(code_scores, key=code_scores.get)
+    market_col = max(market_scores, key=market_scores.get)
+    if code_scores[code_col] < 20 or market_scores[market_col] < 20:
+        raise ValueError(f"unable to infer JPX workbook columns in sheet {ws.title!r}")
+
+    candidates = [
+        col
+        for col in range(1, col_limit + 1)
+        if col not in {code_col, market_col}
+    ]
+    preferred = code_col + 1
+    if preferred in candidates and text_scores[preferred] >= 20:
+        name_col = preferred
+    else:
+        name_col = max(candidates, key=lambda col: text_scores[col])
+    return 0, {"code": code_col, "name": name_col, "market": market_col}
+
+
 def parse_listed_workbook(raw: bytes, *, snapshot_date: date) -> list[ListedIssue]:
     wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
     selected = None
@@ -138,10 +178,16 @@ def parse_listed_workbook(raw: bytes, *, snapshot_date: date) -> list[ListedIssu
             break
         except ValueError as exc:
             failures.append(str(exc))
+            try:
+                header_row, cols = _infer_columns(ws)
+                selected = (ws, header_row, cols)
+                break
+            except ValueError as infer_exc:
+                failures.append(str(infer_exc))
     if selected is None:
         raise ValueError(
-            "JPX listed-issues workbook header not found; "
-            + "; ".join(failures[:5])
+            "JPX listed-issues workbook columns not found; "
+            + "; ".join(failures[:8])
         )
 
     ws, header_row, cols = selected
