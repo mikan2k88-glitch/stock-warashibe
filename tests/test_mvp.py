@@ -1045,6 +1045,9 @@ def test_historical_membership_reconstruction_can_verify_complete_public_events(
         ListedIssue(str(1000 + i), f"Current {i}", "Prime Market (Domestic Stocks)", "2026-08-31")
         for i in range(1000)
     ]
+    current.append(
+        ListedIssue("2001", "New Co", "Growth Market (Domestic Stocks)", "2026-08-31")
+    )
     new = [
         NewListingIssue("2022-02-01", "New Co", "2001", "Growth", "test"),
     ]
