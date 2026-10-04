@@ -71,7 +71,7 @@ def _snapshot_date_from_text(text: str) -> date:
         next_month = date(year + 1, 1, 1)
     else:
         next_month = date(year, month + 1, 1)
-    return next_month.fromordinal(next_month.toordinal() - 1)
+    return date.fromordinal(next_month.toordinal() - 1)
 
 
 def parse_listed_page(raw: bytes) -> tuple[str, date]:
@@ -91,17 +91,17 @@ def parse_listed_page(raw: bytes) -> tuple[str, date]:
     return xlsx, snapshot
 
 
-def _find_header(ws) -> tuple[int, dict[str, int]]:
-    for row_index in range(1, min(ws.max_row, 50) + 1):
-        values = [
-            str(ws.cell(row_index, col).value or "").strip()
-            for col in range(1, min(ws.max_column, 40) + 1)
-        ]
-        normalized = {value.lower(): idx + 1 for idx, value in enumerate(values) if value}
+def _header_columns(rows: list[tuple]) -> tuple[int, dict[str, int]] | None:
+    for row_index, row in enumerate(rows[:50]):
+        labels = {
+            str(value or "").strip().lower(): col_index
+            for col_index, value in enumerate(row)
+            if str(value or "").strip()
+        }
         code_col = next(
             (
                 col
-                for label, col in normalized.items()
+                for label, col in labels.items()
                 if label == "code" or "issue code" in label or "security code" in label
             ),
             None,
@@ -109,7 +109,7 @@ def _find_header(ws) -> tuple[int, dict[str, int]]:
         name_col = next(
             (
                 col
-                for label, col in normalized.items()
+                for label, col in labels.items()
                 if "issue name" in label or "company name" in label or label == "name"
             ),
             None,
@@ -117,110 +117,112 @@ def _find_header(ws) -> tuple[int, dict[str, int]]:
         market_col = next(
             (
                 col
-                for label, col in normalized.items()
+                for label, col in labels.items()
                 if "market" in label or "product" in label
             ),
             None,
         )
-        if code_col and name_col and market_col:
+        if code_col is not None and name_col is not None and market_col is not None:
             return row_index, {"code": code_col, "name": name_col, "market": market_col}
-    raise ValueError(f"header not found in sheet {ws.title!r}")
+    return None
 
 
-def _infer_columns(ws) -> tuple[int, dict[str, int]]:
+def _infer_columns(rows: list[tuple]) -> tuple[int, dict[str, int]]:
     code_pattern = re.compile(r"^(?:[0-9]{4}|[0-9]{3}[A-Z])$")
-    row_limit = min(ws.max_row, 800)
-    col_limit = min(ws.max_column, 20)
-    code_scores = {col: 0 for col in range(1, col_limit + 1)}
-    market_scores = {col: 0 for col in range(1, col_limit + 1)}
-    text_scores = {col: 0 for col in range(1, col_limit + 1)}
+    sample = rows[:800]
+    col_count = max((len(row) for row in sample), default=0)
+    if not col_count:
+        raise ValueError("empty JPX listed-issues sheet")
 
-    for row in range(1, row_limit + 1):
-        for col in range(1, col_limit + 1):
-            value = ws.cell(row, col).value
+    code_scores = [0] * col_count
+    market_scores = [0] * col_count
+    text_scores = [0] * col_count
+
+    for row in sample:
+        for col, value in enumerate(row):
             if value is None:
                 continue
-            text = _normalize_code(value)
-            lower = text.lower()
-            if code_pattern.match(text):
+            normalized = _normalize_code(value)
+            lower = normalized.lower()
+            if code_pattern.match(normalized):
                 code_scores[col] += 1
             if any(label in lower for label in ("prime", "standard", "growth")):
                 market_scores[col] += 1
             if isinstance(value, str) and len(value.strip()) >= 2:
                 text_scores[col] += 1
 
-    code_col = max(code_scores, key=code_scores.get)
-    market_col = max(market_scores, key=market_scores.get)
+    code_col = max(range(col_count), key=lambda col: code_scores[col])
+    market_col = max(range(col_count), key=lambda col: market_scores[col])
     if code_scores[code_col] < 20 or market_scores[market_col] < 20:
-        raise ValueError(f"unable to infer JPX workbook columns in sheet {ws.title!r}")
+        raise ValueError("unable to infer JPX listed-issues columns")
 
-    candidates = [
-        col
-        for col in range(1, col_limit + 1)
-        if col not in {code_col, market_col}
-    ]
     preferred = code_col + 1
-    if preferred in candidates and text_scores[preferred] >= 20:
+    if preferred < col_count and preferred != market_col and text_scores[preferred] >= 20:
         name_col = preferred
     else:
+        candidates = [
+            col
+            for col in range(col_count)
+            if col not in {code_col, market_col}
+        ]
         name_col = max(candidates, key=lambda col: text_scores[col])
-    return 0, {"code": code_col, "name": name_col, "market": market_col}
+
+    return -1, {"code": code_col, "name": name_col, "market": market_col}
 
 
 def parse_listed_workbook(raw: bytes, *, snapshot_date: date) -> list[ListedIssue]:
     wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
-    selected = None
-    failures = []
+    failures: list[str] = []
+
     for ws in wb.worksheets:
+        rows = list(ws.iter_rows(values_only=True))
         try:
-            header_row, cols = _find_header(ws)
-            selected = (ws, header_row, cols)
-            break
+            detected = _header_columns(rows)
+            header_row, cols = detected if detected is not None else _infer_columns(rows)
         except ValueError as exc:
-            failures.append(str(exc))
-            try:
-                header_row, cols = _infer_columns(ws)
-                selected = (ws, header_row, cols)
-                break
-            except ValueError as infer_exc:
-                failures.append(str(infer_exc))
-    if selected is None:
-        raise ValueError(
-            "JPX listed-issues workbook columns not found; "
-            + "; ".join(failures[:8])
-        )
+            failures.append(f"{ws.title}: {exc}")
+            continue
 
-    ws, header_row, cols = selected
-    issues: list[ListedIssue] = []
-    seen: set[str] = set()
+        issues: list[ListedIssue] = []
+        seen: set[str] = set()
+        start_index = header_row + 1 if header_row >= 0 else 0
 
-    for row in range(header_row + 1, ws.max_row + 1):
-        code = _normalize_code(ws.cell(row, cols["code"]).value)
-        name = str(ws.cell(row, cols["name"]).value or "").strip()
-        market = str(ws.cell(row, cols["market"]).value or "").strip()
-        lower = market.lower()
-        if not code or not name:
-            continue
-        if not any(label in lower for label in ("prime", "standard", "growth")):
-            continue
-        if "foreign" in lower or "pro market" in lower:
-            continue
-        if code in seen:
-            continue
-        seen.add(code)
-        issues.append(
-            ListedIssue(
-                code=code,
-                company_name=name,
-                market_segment=market,
-                snapshot_date=snapshot_date.isoformat(),
+        for values in rows[start_index:]:
+            def cell(index: int):
+                return values[index] if index < len(values) else None
+
+            code = _normalize_code(cell(cols["code"]))
+            name = str(cell(cols["name"]) or "").strip()
+            market = str(cell(cols["market"]) or "").strip()
+            lower = market.lower()
+
+            if not code or not name:
+                continue
+            if not any(label in lower for label in ("prime", "standard", "growth")):
+                continue
+            if "foreign" in lower or "pro market" in lower:
+                continue
+            if code in seen:
+                continue
+
+            seen.add(code)
+            issues.append(
+                ListedIssue(
+                    code=code,
+                    company_name=name,
+                    market_segment=market,
+                    snapshot_date=snapshot_date.isoformat(),
+                )
             )
-        )
-    if not issues:
-        raise ValueError(
-            f"JPX listed-issues workbook produced zero domestic stock rows from {ws.title!r}"
-        )
-    return issues
+
+        if issues:
+            return issues
+        failures.append(f"{ws.title}: zero domestic stock rows")
+
+    raise ValueError(
+        "JPX listed-issues workbook could not be parsed; "
+        + "; ".join(failures[:8])
+    )
 
 
 def fetch_current_listed_issues(
