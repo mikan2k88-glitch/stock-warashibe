@@ -1,18 +1,20 @@
-name: Pre-Live Development Gates
+name: G6 Prospective Shadow Validation
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: "30 7 * * 1-5"
 
 permissions:
   contents: read
   id-token: write
 
 jobs:
-  endpoints-021-030:
+  shadow-validation:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,5 +24,5 @@ jobs:
         run: pip install -r requirements.txt
       - name: Run full tests
         run: python -m pytest -q
-      - name: Run endpoints 021 through 031
-        run: python prelive_pipeline.py
+      - name: Record forward-only G6 shadow observations
+        run: python shadow_validation.py

@@ -1064,3 +1064,34 @@ def test_historical_membership_reconstruction_can_verify_complete_public_events(
     assert result["historical_membership_snapshot_count"] >= 48
     assert result["point_in_time"]["verified"] is True
     assert result["status"] == "verified_public_reconstruction"
+
+
+def test_shadow_validation_records_research_only_observations():
+    from research.shadow_validation import build_shadow_observations
+
+    robustness = {
+        "live_trading": False,
+        "summary": {"champion_strategy": "mean_reversion_cost_floor:g6"},
+        "per_symbol": [
+            {
+                "symbol": "9432.T",
+                "sector": "telecom",
+                "source_sha256": "a" * 64,
+                "latest_snapshot": {
+                    "date": "2026-10-02",
+                    "close": 150.0,
+                    "action": "buy",
+                    "score": 0.02,
+                    "reason": "test",
+                },
+            }
+        ],
+    }
+    result = build_shadow_observations(robustness)
+    assert result["endpoint"] == "032"
+    assert result["prospective_only"] is True
+    assert result["parameter_tuning"] is False
+    assert result["paper_order_created"] is False
+    assert result["live_trading"] is False
+    assert result["observations"][0]["observation_key"] == "g6-shadow:9432.T:2026-10-02"
+    assert result["observations"][0]["shares"] == 100
