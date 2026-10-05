@@ -14,6 +14,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      actions: write
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -24,4 +25,7 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install -r requirements.txt
-      - run: python dev_queue_executor.py
+      - name: Execute queued development ticket
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python dev_queue_executor.py
