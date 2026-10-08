@@ -67,8 +67,26 @@ def main() -> int:
         as_of=today,
         run_id=run_id,
     )
+    # Apply critical alerts before the burn-in safety assessment.
+    if any(
+        row.get("status") == "open" and row.get("severity") == "critical"
+        for row in alerts
+    ):
+        runtime_status["status"] = "degraded"
+
+    # The current run's checks have completed, but are not stored yet.
+    # Include them for same-day coverage; failed/degraded checks still block.
+    burnin_context = dict(context)
+    burnin_context["runtime_history"] = [
+        {"created_at": today.isoformat(), "status": runtime_status["status"]},
+        *(context.get("runtime_history") or []),
+    ]
+    burnin_context["integrity_history"] = [
+        {"created_at": today.isoformat(), "status": integrity["status"]},
+        *(context.get("integrity_history") or []),
+    ]
     burnin = evaluate_operational_burnin(
-        context,
+        burnin_context,
         as_of=today,
         run_id=run_id,
     )
@@ -84,12 +102,6 @@ def main() -> int:
         alerts,
         run_id=run_id,
     )
-
-    if any(
-        row.get("status") == "open" and row.get("severity") == "critical"
-        for row in alerts
-    ):
-        runtime_status["status"] = "degraded"
 
     stored = post_json(
         token,
