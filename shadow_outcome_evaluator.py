@@ -17,6 +17,8 @@ from research.shadow_outcome import (
 STORE_URL = "https://bittxuhjejaokfgmymkw.supabase.co/functions/v1/stock-warashibe-shadow-store"
 OIDC_AUDIENCE = "stock-warashibe-supabase"
 ADAPTIVE_EXIT_FROZEN_AFTER = "2026-10-10"
+ADAPTIVE_MIN_OBSERVATION_DAYS = 30
+ADAPTIVE_MIN_PAIRED_BUY_SIGNALS = 20
 
 ADAPTIVE_EXIT_POLICIES = {
     "A": AdaptiveExitPolicy(
@@ -119,6 +121,73 @@ def _paired_comparison(
     }
 
 
+def _adaptive_readiness(
+    prospective_buys: list[dict],
+    by_policy: dict,
+) -> dict:
+    observation_days = len({
+        str(row.get("observation_date") or "")
+        for row in prospective_buys
+        if row.get("observation_date")
+    })
+    paired_counts = [
+        int((row.get("paired_vs_fixed5") or {}).get("paired_count") or 0)
+        for row in by_policy.values()
+    ]
+    paired_count = min(paired_counts) if paired_counts else 0
+    sufficient = (
+        observation_days >= ADAPTIVE_MIN_OBSERVATION_DAYS
+        and paired_count >= ADAPTIVE_MIN_PAIRED_BUY_SIGNALS
+    )
+
+    ranked = []
+    for label, row in by_policy.items():
+        paired = row.get("paired_vs_fixed5") or {}
+        ranked.append({
+            "label": label,
+            "paired_count": int(paired.get("paired_count") or 0),
+            "candidate_win_ratio": paired.get("candidate_win_ratio"),
+            "mean_net_pnl_delta_vs_fixed5": paired.get(
+                "mean_net_pnl_delta_vs_fixed5"
+            ),
+            "cumulative_net_pnl_delta_vs_fixed5": paired.get(
+                "cumulative_net_pnl_delta_vs_fixed5"
+            ),
+        })
+    ranked.sort(
+        key=lambda row: (
+            -(float(row["candidate_win_ratio"]) if row["candidate_win_ratio"] is not None else -1.0),
+            -(float(row["mean_net_pnl_delta_vs_fixed5"]) if row["mean_net_pnl_delta_vs_fixed5"] is not None else -1e18),
+            row["label"],
+        )
+    )
+
+    leader = ranked[0] if sufficient and ranked else None
+    leader_positive = bool(
+        leader
+        and float(leader.get("candidate_win_ratio") or 0) > 0.5
+        and float(leader.get("mean_net_pnl_delta_vs_fixed5") or 0) > 0
+        and float(leader.get("cumulative_net_pnl_delta_vs_fixed5") or 0) > 0
+    )
+    return {
+        "status": "ready_for_review" if sufficient else "collecting",
+        "observation_days": observation_days,
+        "minimum_observation_days": ADAPTIVE_MIN_OBSERVATION_DAYS,
+        "paired_buy_signals": paired_count,
+        "minimum_paired_buy_signals": ADAPTIVE_MIN_PAIRED_BUY_SIGNALS,
+        "sufficient_evidence": sufficient,
+        "leader": leader,
+        "leader_positive_vs_fixed5": leader_positive,
+        "automatic_adoption": False,
+        "human_review_required": True,
+        "next_action": (
+            "human_review_of_frozen_candidates"
+            if sufficient
+            else "continue_future_only_collection"
+        ),
+    }
+
+
 def build_adaptive_exit_evidence(
     *,
     token: str,
@@ -172,6 +241,7 @@ def build_adaptive_exit_evidence(
         float((row.get("outcome") or {})["net_pnl"])
         for row in baseline_matured
     ]
+    readiness = _adaptive_readiness(prospective_buys, by_policy)
     return {
         "frozen_after_date": ADAPTIVE_EXIT_FROZEN_AFTER,
         "prospective_rule": "observation_date_strictly_after_freeze_date",
@@ -181,6 +251,7 @@ def build_adaptive_exit_evidence(
         "fixed5_matured_count": len(baseline_matured),
         "fixed5_cumulative_net_pnl": round(sum(baseline_pnls), 2),
         "challengers": by_policy,
+        "readiness": readiness,
         "automatic_adoption": False,
         "paper_gate_reopened": False,
         "paper_trading_allowed": False,
