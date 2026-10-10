@@ -27,6 +27,8 @@ MIN_COMPARABLE_WINDOWS = 8
 MIN_COMPARABLE_TRADES = 20
 LARGE_DOWNSIDE_THRESHOLD_YEN = -2000.0
 RISK_STAGE_MIN_BETTER_WINDOW_RATIO = 0.50
+RECENT_TRADING_DAYS = 30
+RECENT_MIN_PAIRED_SIGNALS = 5
 
 
 @dataclass(frozen=True)
@@ -448,6 +450,212 @@ def run_adaptive_exit_optimization(
             "automatic_adoption": False,
         },
         "safety": {
+            "automatic_strategy_change": False,
+            "automatic_promotion": False,
+            "paper_gate_reopened": False,
+            "paper_trading_allowed": False,
+            "live_trading_allowed": False,
+        },
+    }
+
+
+def _recent_signal_indices(bars: list, *, lookback_days: int) -> list[int]:
+    """Return recent G6 buy-signal decision indices with enough future bars.
+
+    Candidate policies are compared on the exact same decisions. We require
+    enough future bars for the longest risk-stage policy plus next-open exit.
+    """
+    strategy = build_strategy(CURRENT_CHAMPION_SPEC)
+    max_holding = max(policy.max_holding_days for policy in risk_stage_policy_grid())
+    recent_start = max(2, len(bars) - lookback_days)
+    last_decision = len(bars) - max_holding - 2
+    indices = []
+    for decision_index in range(recent_start, last_decision + 1):
+        history = bars[: decision_index + 1]
+        if not evaluate_trade(history).allowed:
+            continue
+        if strategy.evaluate(history).action == "buy":
+            indices.append(decision_index)
+    return indices
+
+
+def _simulate_signal_trade(
+    batch,
+    *,
+    decision_index: int,
+    policy: ExitPolicy | None,
+) -> dict | None:
+    bars = list(batch.bars)
+    entry_index = decision_index + 1
+    if policy is None:
+        exit_index = _baseline_exit_index(bars, decision_index=decision_index)
+        if exit_index is None:
+            return None
+        exit_reason = "fixed_5_future_bars"
+    else:
+        resolved = _adaptive_exit_index(
+            bars,
+            entry_index=entry_index,
+            policy=policy,
+        )
+        if resolved is None:
+            return None
+        exit_index, exit_reason = resolved
+
+    return _trade_result(
+        bars,
+        symbol=batch.symbol,
+        decision_index=decision_index,
+        entry_index=entry_index,
+        exit_index=exit_index,
+        exit_reason=exit_reason,
+        exit_at_open=policy is not None,
+    )
+
+
+def _recent_candidate_summary(
+    paired_rows: list[dict],
+    policy: ExitPolicy,
+) -> dict:
+    comparable = [
+        row for row in paired_rows
+        if row["baseline"] is not None and row["candidate"] is not None
+    ]
+    deltas = [
+        float(row["candidate"]["net_pnl"]) - float(row["baseline"]["net_pnl"])
+        for row in comparable
+    ]
+    candidate_pnls = [
+        float(row["candidate"]["net_pnl"]) for row in comparable
+    ]
+    baseline_pnls = [
+        float(row["baseline"]["net_pnl"]) for row in comparable
+    ]
+    candidate_wins = sum(value > 0 for value in deltas)
+    downside_count = sum(
+        value <= LARGE_DOWNSIDE_THRESHOLD_YEN for value in deltas
+    )
+    holds = [
+        int(row["candidate"]["holding_trading_days"]) for row in comparable
+    ]
+    return {
+        "policy_key": policy.key,
+        "policy": asdict(policy),
+        "paired_signal_count": len(comparable),
+        "candidate_win_count_vs_fixed5": candidate_wins,
+        "candidate_win_ratio_vs_fixed5": (
+            round(candidate_wins / len(comparable), 6) if comparable else 0.0
+        ),
+        "mean_net_pnl_delta_vs_fixed5": (
+            round(mean(deltas), 4) if deltas else 0.0
+        ),
+        "cumulative_net_pnl_delta_vs_fixed5": round(sum(deltas), 2),
+        "candidate_cumulative_net_pnl": round(sum(candidate_pnls), 2),
+        "baseline_cumulative_net_pnl": round(sum(baseline_pnls), 2),
+        "candidate_win_rate": (
+            round(sum(value > 0 for value in candidate_pnls) / len(candidate_pnls), 6)
+            if candidate_pnls
+            else 0.0
+        ),
+        "worst_trade_net_pnl": (
+            round(min(candidate_pnls), 2) if candidate_pnls else 0.0
+        ),
+        "worst_delta_vs_fixed5": round(min(deltas), 2) if deltas else 0.0,
+        "lower_tail_mean_delta_vs_fixed5": _lower_tail_mean(deltas),
+        "large_downside_signal_count": downside_count,
+        "average_holding_days": round(mean(holds), 4) if holds else 0.0,
+        "eligible": len(comparable) >= RECENT_MIN_PAIRED_SIGNALS,
+    }
+
+
+def run_recent_30d_exit_optimization(
+    *,
+    provider=None,
+    symbols: tuple[str, ...] = FIXED_UNIVERSE,
+    as_of: date | None = None,
+) -> dict:
+    """Recent-regime diagnostic using the latest 30 trading bars.
+
+    This is retrospective evidence only. It never changes the frozen prospective
+    A/B/C challengers, G6, Paper Gate, or live behavior.
+    """
+    current_date = as_of or date.today()
+    data_provider = provider or YahooChartDailyBarProvider()
+    policies = risk_stage_policy_grid()
+    paired_by_policy = {policy.key: [] for policy in policies}
+    signal_count = 0
+    symbol_rows = []
+
+    for symbol in symbols:
+        try:
+            batch = data_provider.load_batch(symbol, as_of=current_date)
+        except Exception:
+            continue
+        bars = list(batch.bars)
+        signal_indices = _recent_signal_indices(
+            bars,
+            lookback_days=RECENT_TRADING_DAYS,
+        )
+        symbol_rows.append({
+            "symbol": symbol,
+            "recent_signal_count": len(signal_indices),
+            "source_sha256": batch.source_sha256,
+        })
+        signal_count += len(signal_indices)
+
+        for decision_index in signal_indices:
+            baseline = _simulate_signal_trade(
+                batch,
+                decision_index=decision_index,
+                policy=None,
+            )
+            for policy in policies:
+                candidate = _simulate_signal_trade(
+                    batch,
+                    decision_index=decision_index,
+                    policy=policy,
+                )
+                paired_by_policy[policy.key].append({
+                    "symbol": symbol,
+                    "decision_date": bars[decision_index].date,
+                    "baseline": baseline,
+                    "candidate": candidate,
+                })
+
+    summaries = [
+        _recent_candidate_summary(paired_by_policy[policy.key], policy)
+        for policy in policies
+    ]
+    eligible = [row for row in summaries if row["eligible"]]
+    eligible.sort(
+        key=lambda row: (
+            row["large_downside_signal_count"],
+            -row["lower_tail_mean_delta_vs_fixed5"],
+            -row["candidate_win_ratio_vs_fixed5"],
+            -row["mean_net_pnl_delta_vs_fixed5"],
+            -row["cumulative_net_pnl_delta_vs_fixed5"],
+            row["average_holding_days"],
+            row["policy_key"],
+        )
+    )
+
+    return {
+        "mode": "recent_30_trading_day_adaptive_exit_optimization",
+        "as_of": current_date.isoformat(),
+        "lookback_trading_days": RECENT_TRADING_DAYS,
+        "same_g6_signals_for_all_candidates": True,
+        "execution_policy": "daily_close_decision_next_open_execution",
+        "strategy_key": CURRENT_CHAMPION_SPEC["strategy_key"],
+        "signal_count": signal_count,
+        "minimum_paired_signals": RECENT_MIN_PAIRED_SIGNALS,
+        "parameter_grid_size": len(summaries),
+        "symbol_coverage": symbol_rows,
+        "selected_diagnostic_candidate": eligible[0] if eligible else None,
+        "top_candidates": eligible[:10],
+        "candidate_count_eligible": len(eligible),
+        "safety": {
+            "retrospective_only": True,
+            "prospective_abc_modified": False,
             "automatic_strategy_change": False,
             "automatic_promotion": False,
             "paper_gate_reopened": False,
