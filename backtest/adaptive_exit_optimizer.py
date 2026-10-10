@@ -25,6 +25,8 @@ from strategies.registry import build_strategy
 BASELINE_HORIZON_FUTURE_BARS = 5
 MIN_COMPARABLE_WINDOWS = 8
 MIN_COMPARABLE_TRADES = 20
+LARGE_DOWNSIDE_THRESHOLD_YEN = -2000.0
+RISK_STAGE_MIN_BETTER_WINDOW_RATIO = 0.50
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,31 @@ def policy_grid() -> tuple[ExitPolicy, ...]:
                 max_holding_days=max_days,
                 hard_stop_loss_pct=stop,
                 profit_target_pct=target,
+                trailing_activation_pct=activation,
+                trailing_stop_pct=trail,
+            )
+        )
+    return tuple(rows)
+
+
+def risk_stage_policy_grid() -> tuple[ExitPolicy, ...]:
+    """Narrow second-stage grid derived from the first-stage direction.
+
+    Fixed profit targets are intentionally removed here because the first-stage
+    evidence favored letting winners run and protecting them with trailing exits.
+    """
+    rows = []
+    for max_days, stop, activation, trail in product(
+        (10, 12, 15),
+        (0.05, 0.06, 0.07),
+        (0.03, 0.04, 0.05),
+        (0.015, 0.02, 0.025, 0.03),
+    ):
+        rows.append(
+            ExitPolicy(
+                max_holding_days=max_days,
+                hard_stop_loss_pct=stop,
+                profit_target_pct=None,
                 trailing_activation_pct=activation,
                 trailing_stop_pct=trail,
             )
@@ -204,6 +231,14 @@ def _simulate_window(batch, *, split_index: int, policy: ExitPolicy | None) -> d
     }
 
 
+def _lower_tail_mean(values: list[float], *, fraction: float = 0.20) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    count = max(1, int(len(ordered) * fraction))
+    return round(mean(ordered[:count]), 4)
+
+
 def _summarize_candidate(rows: list[dict], policy: ExitPolicy) -> dict:
     comparable = [
         row
@@ -222,6 +257,9 @@ def _summarize_candidate(rows: list[dict], policy: ExitPolicy) -> dict:
         for row in comparable
         if row["candidate"]["trade_count"] > 0
     ]
+    large_downside_count = sum(
+        value <= LARGE_DOWNSIDE_THRESHOLD_YEN for value in improvements
+    )
     return {
         "policy_key": policy.key,
         "policy": asdict(policy),
@@ -240,6 +278,8 @@ def _summarize_candidate(rows: list[dict], policy: ExitPolicy) -> dict:
         "worst_window_pnl_improvement": round(min(improvements), 4)
         if improvements
         else 0.0,
+        "lower_tail_mean_improvement": _lower_tail_mean(improvements),
+        "large_downside_window_count": large_downside_count,
         "average_holding_days": round(mean(holds), 4) if holds else 0.0,
         "eligible": (
             len(comparable) >= MIN_COMPARABLE_WINDOWS
@@ -248,24 +288,13 @@ def _summarize_candidate(rows: list[dict], policy: ExitPolicy) -> dict:
     }
 
 
-def run_adaptive_exit_optimization(
+def _run_grid(
+    loaded: dict,
     *,
-    provider=None,
-    symbols: tuple[str, ...] = FIXED_UNIVERSE,
-    as_of: date | None = None,
-) -> dict:
-    current_date = as_of or date.today()
-    data_provider = provider or YahooChartDailyBarProvider()
-    loaded = {}
-
-    for symbol in symbols:
-        try:
-            loaded[symbol] = data_provider.load_batch(symbol, as_of=current_date)
-        except Exception:
-            continue
-
+    policies: tuple[ExitPolicy, ...],
+) -> tuple[list[dict], list[dict]]:
     baseline_windows = []
-    candidate_windows = {policy.key: [] for policy in policy_grid()}
+    candidate_windows = {policy.key: [] for policy in policies}
 
     for symbol, batch in loaded.items():
         for window_index, (start, end, split_index) in enumerate(
@@ -285,7 +314,7 @@ def run_adaptive_exit_optimization(
                     "baseline": baseline,
                 }
             )
-            for policy in policy_grid():
+            for policy in policies:
                 candidate = _simulate_window(
                     window_batch,
                     split_index=split_index,
@@ -302,8 +331,31 @@ def run_adaptive_exit_optimization(
 
     summaries = [
         _summarize_candidate(candidate_windows[policy.key], policy)
-        for policy in policy_grid()
+        for policy in policies
     ]
+    return baseline_windows, summaries
+
+
+def run_adaptive_exit_optimization(
+    *,
+    provider=None,
+    symbols: tuple[str, ...] = FIXED_UNIVERSE,
+    as_of: date | None = None,
+) -> dict:
+    current_date = as_of or date.today()
+    data_provider = provider or YahooChartDailyBarProvider()
+    loaded = {}
+
+    for symbol in symbols:
+        try:
+            loaded[symbol] = data_provider.load_batch(symbol, as_of=current_date)
+        except Exception:
+            continue
+
+    baseline_windows, summaries = _run_grid(
+        loaded,
+        policies=policy_grid(),
+    )
     eligible = [row for row in summaries if row["eligible"]]
     eligible.sort(
         key=lambda row: (
@@ -315,6 +367,29 @@ def run_adaptive_exit_optimization(
         )
     )
     selected = eligible[0] if eligible else None
+
+    _, risk_summaries = _run_grid(
+        loaded,
+        policies=risk_stage_policy_grid(),
+    )
+    risk_eligible = [
+        row for row in risk_summaries
+        if row["eligible"]
+        and row["better_window_ratio"] >= RISK_STAGE_MIN_BETTER_WINDOW_RATIO
+        and row["mean_window_pnl_improvement"] > 0
+    ]
+    risk_eligible.sort(
+        key=lambda row: (
+            row["large_downside_window_count"],
+            -row["lower_tail_mean_improvement"],
+            -row["worst_window_pnl_improvement"],
+            -row["better_window_ratio"],
+            -row["mean_window_pnl_improvement"],
+            row["average_holding_days"],
+            row["policy_key"],
+        )
+    )
+    risk_shortlist = risk_eligible[:3]
 
     baseline_trade_count = sum(
         row["baseline"]["trade_count"] for row in baseline_windows
@@ -346,6 +421,20 @@ def run_adaptive_exit_optimization(
         "selected": selected,
         "top_candidates": eligible[:10],
         "candidate_count_eligible": len(eligible),
+        "risk_stage": {
+            "mode": "downside_robustness_optimization",
+            "parameter_grid_size": len(risk_summaries),
+            "fixed_profit_target_removed": True,
+            "large_downside_threshold_yen": LARGE_DOWNSIDE_THRESHOLD_YEN,
+            "minimum_better_window_ratio": RISK_STAGE_MIN_BETTER_WINDOW_RATIO,
+            "selection_rule": (
+                "minimize large-downside windows, maximize lower-tail mean, "
+                "maximize worst-window improvement, then consistency and mean improvement"
+            ),
+            "shortlist": risk_shortlist,
+            "shortlist_count": len(risk_shortlist),
+            "automatic_adoption": False,
+        },
         "safety": {
             "automatic_strategy_change": False,
             "automatic_promotion": False,
