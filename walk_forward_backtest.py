@@ -4,6 +4,7 @@ import json
 import os
 import urllib.request
 
+from backtest.adaptive_exit_optimizer import run_adaptive_exit_optimization
 from backtest.historical_gate import assess_historical_gate
 from backtest.walk_forward_runner import run_walk_forward_validation
 
@@ -42,6 +43,7 @@ def post_json(token: str, payload: dict) -> dict:
 def main() -> int:
     result = run_walk_forward_validation()
     result["historical_gate"] = assess_historical_gate(result)
+    result["adaptive_exit_optimization"] = run_adaptive_exit_optimization()
 
     run_id = os.environ.get("GITHUB_RUN_ID", "local")
     attempt = os.environ.get("GITHUB_RUN_ATTEMPT", "1")
