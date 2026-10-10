@@ -42,6 +42,13 @@ ADAPTIVE_EXIT_POLICIES = {
         trailing_activation_pct=0.04,
         trailing_stop_pct=0.015,
     ),
+    "D": AdaptiveExitPolicy(
+        max_holding_days=12,
+        hard_stop_loss_pct=0.05,
+        profit_target_pct=None,
+        trailing_activation_pct=0.04,
+        trailing_stop_pct=0.015,
+    ),
 }
 
 
@@ -245,6 +252,8 @@ def build_adaptive_exit_evidence(
     return {
         "frozen_after_date": ADAPTIVE_EXIT_FROZEN_AFTER,
         "prospective_rule": "observation_date_strictly_after_freeze_date",
+        "candidate_set": "fixed5+A+B+C+D",
+        "candidate_D_origin": "recent_30_trading_day_retrospective_diagnostic",
         "execution_policy": "daily_close_decision_next_open_execution",
         "strategy_key": "mean_reversion_cost_floor:g6",
         "prospective_buy_signal_count": len(prospective_buys),
