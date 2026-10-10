@@ -108,9 +108,10 @@ def _trade_result(
     entry_index: int,
     exit_index: int,
     exit_reason: str,
+    exit_at_open: bool = False,
 ) -> dict | None:
     raw_entry = float(bars[entry_index].open)
-    raw_exit = float(bars[exit_index].close)
+    raw_exit = float(bars[exit_index].open if exit_at_open else bars[exit_index].close)
     buy_price = raw_entry * (1 + DEFAULT_SLIPPAGE_RATE)
     sell_price = raw_exit * (1 - DEFAULT_SLIPPAGE_RATE)
     shares = _round_lot_shares(buy_price)
@@ -146,9 +147,16 @@ def _adaptive_exit_index(
 ) -> tuple[int, str] | None:
     raw_entry = float(bars[entry_index].open)
     peak_close = float(bars[entry_index].close)
-    last_index = min(len(bars) - 1, entry_index + policy.max_holding_days - 1)
+    # Adaptive rules are evaluated after each daily close. To avoid look-ahead,
+    # execution occurs at the next trading day's open.
+    if entry_index + 1 >= len(bars):
+        return None
+    last_decision_index = min(
+        len(bars) - 2,
+        entry_index + policy.max_holding_days - 1,
+    )
 
-    for index in range(entry_index, last_index + 1):
+    for index in range(entry_index, last_decision_index + 1):
         close = float(bars[index].close)
         peak_close = max(peak_close, close)
         return_from_entry = (close / raw_entry) - 1.0
@@ -156,19 +164,22 @@ def _adaptive_exit_index(
         drawdown_from_peak = (close / peak_close) - 1.0
 
         if return_from_entry <= -policy.hard_stop_loss_pct:
-            return index, "hard_stop_loss"
+            return index + 1, "hard_stop_loss"
         if (
             policy.profit_target_pct is not None
             and return_from_entry >= policy.profit_target_pct
         ):
-            return index, "profit_target"
+            return index + 1, "profit_target"
         if (
             peak_return >= policy.trailing_activation_pct
             and drawdown_from_peak <= -policy.trailing_stop_pct
         ):
-            return index, "trailing_profit_protection"
-        if index == last_index and (index - entry_index + 1) >= policy.max_holding_days:
-            return index, "maximum_holding_period"
+            return index + 1, "trailing_profit_protection"
+        if (
+            index == last_decision_index
+            and (index - entry_index + 1) >= policy.max_holding_days
+        ):
+            return index + 1, "maximum_holding_period"
     return None
 
 
@@ -211,6 +222,7 @@ def _simulate_window(batch, *, split_index: int, policy: ExitPolicy | None) -> d
             entry_index=entry_index,
             exit_index=exit_index,
             exit_reason=exit_reason,
+            exit_at_open=policy is not None,
         )
         if trade is not None:
             trades.append(trade)
