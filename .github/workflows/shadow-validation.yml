@@ -5,7 +5,8 @@ on:
     branches: [main]
   workflow_dispatch:
   schedule:
-    - cron: "30 7 * * 1-5"
+    - cron: "30 7 * * 1-5"  # 16:30 JST primary collection
+    - cron: "30 9 * * 1-5"  # 18:30 JST recovery collection
 
 permissions:
   contents: read
