@@ -140,22 +140,28 @@ def main() -> int:
         return 0
 
     task_id = str(task.get("task_id") or "")
-    path = allowed_path(str(task.get("target_path") or ""))
-    if task.get("base_sha") and task.get("base_sha") != current_head():
-        queue_call(
-            token,
-            {"action": "reject", "task_id": task_id, "error_message": "base_sha_mismatch"},
-        )
-        return 0
-
-    content = task.get("content")
-    if not isinstance(content, str) or len(content.encode()) > MAX_CONTENT_BYTES:
-        raise ValueError("invalid_content")
-
-    existed = path.exists()
-    old = path.read_text(encoding="utf-8") if existed else None
+    path: Path | None = None
+    existed = False
+    old: str | None = None
     pushed = False
+
     try:
+        if not task_id:
+            raise ValueError("missing_task_id")
+        path = allowed_path(str(task.get("target_path") or ""))
+        if task.get("base_sha") and task.get("base_sha") != current_head():
+            queue_call(
+                token,
+                {"action": "reject", "task_id": task_id, "error_message": "base_sha_mismatch"},
+            )
+            return 0
+
+        content = task.get("content")
+        if not isinstance(content, str) or len(content.encode()) > MAX_CONTENT_BYTES:
+            raise ValueError("invalid_content")
+
+        existed = path.exists()
+        old = path.read_text(encoding="utf-8") if existed else None
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         ok, log = verify()
@@ -200,16 +206,35 @@ def main() -> int:
                 "test_result": log,
             },
         )
-
         dispatch_validation_workflows(expected_sha=sha)
         print(f"Committed {task_id} as {sha} and dispatched validation workflows")
         return 0
-    except Exception:
+    except Exception as exc:
         if not pushed:
-            if existed and old is not None:
-                path.write_text(old, encoding="utf-8")
-            elif not existed:
-                path.unlink(missing_ok=True)
+            if path is not None:
+                try:
+                    if existed and old is not None:
+                        path.write_text(old, encoding="utf-8")
+                    elif not existed:
+                        path.unlink(missing_ok=True)
+                except OSError:
+                    print("local_restore_failed", file=sys.stderr)
+            if task_id:
+                reason = "executor_" + type(exc).__name__
+                if isinstance(exc, subprocess.CalledProcessError):
+                    command = exc.cmd
+                    if isinstance(command, (tuple, list)) and list(command[:2]) == ["git", "push"]:
+                        reason = f"git_push_failed_exit_{exc.returncode}"
+                try:
+                    queue_call(
+                        token,
+                        {"action": "fail", "task_id": task_id, "error_message": reason},
+                    )
+                except Exception as report_error:
+                    print(
+                        "queue_fail_record_failed:" + type(report_error).__name__,
+                        file=sys.stderr,
+                    )
         raise
 
 
